@@ -66,26 +66,32 @@ export function useWhisperTranscription(): UseWhisperTranscriptionReturn {
       );
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        
+        const bodyText = await response.text().catch(() => '');
         if (response.status === 429) {
           throw new Error('Rate limit exceeded. Please wait and try again.');
         }
         if (response.status === 401) {
-          throw new Error('Authentication failed. Please check your OpenAI API key.');
+          throw new Error('Authentication failed (401). Check function auth or API key. ' + bodyText);
         }
         if (response.status === 402) {
-          throw new Error('Usage limit reached. Please add credits to continue.');
+          throw new Error('Usage limit reached (402). ' + bodyText);
         }
-        
-        throw new Error(errorData.error || `Transcription failed (${response.status})`);
+        throw new Error(`Transcription failed (${response.status}) ${response.statusText} ${bodyText}`);
       }
 
       setProgress('Processing transcription...');
-      const data = await response.json();
+      // Try to parse JSON safely, fallback to raw text for diagnostics
+      let data: any = null;
+      const raw = await response.text().catch(() => '');
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch (e) {
+        console.warn('Whisper function returned non-JSON response:', raw);
+        throw new Error('Transcription function returned invalid response: ' + raw);
+      }
 
-      if (!data.text) {
-        throw new Error('No transcription received from Whisper');
+      if (!data || !data.text) {
+        throw new Error('No transcription received from Whisper: ' + raw);
       }
 
       setProgress('Complete!');

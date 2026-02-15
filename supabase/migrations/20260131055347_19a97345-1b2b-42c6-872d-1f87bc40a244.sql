@@ -40,40 +40,41 @@ ALTER TABLE public.templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies for reports table
+-- Cast auth.uid() to UUID so it compares correctly with the UUID user_id column
 CREATE POLICY "Users can view their own reports" ON public.reports
-  FOR SELECT USING (auth.uid() = user_id);
+  FOR SELECT USING (auth.uid()::uuid = user_id);
 
 CREATE POLICY "Users can create their own reports" ON public.reports
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
+  FOR INSERT WITH CHECK (auth.uid()::uuid = user_id);
 
 CREATE POLICY "Users can update their own reports" ON public.reports
-  FOR UPDATE USING (auth.uid() = user_id);
+  FOR UPDATE USING (auth.uid()::uuid = user_id);
 
 CREATE POLICY "Users can delete their own reports" ON public.reports
-  FOR DELETE USING (auth.uid() = user_id);
+  FOR DELETE USING (auth.uid()::uuid = user_id);
 
 -- RLS Policies for templates table
 CREATE POLICY "Users can view their own templates" ON public.templates
-  FOR SELECT USING (auth.uid() = user_id);
+  FOR SELECT USING (auth.uid()::uuid = user_id);
 
 CREATE POLICY "Users can create their own templates" ON public.templates
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
+  FOR INSERT WITH CHECK (auth.uid()::uuid = user_id);
 
 CREATE POLICY "Users can delete their own templates" ON public.templates
-  FOR DELETE USING (auth.uid() = user_id);
+  FOR DELETE USING (auth.uid()::uuid = user_id);
 
 -- RLS Policies for settings table
 CREATE POLICY "Users can view their own settings" ON public.settings
-  FOR SELECT USING (auth.uid() = user_id);
+  FOR SELECT USING (auth.uid()::uuid = user_id);
 
 CREATE POLICY "Users can create their own settings" ON public.settings
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
+  FOR INSERT WITH CHECK (auth.uid()::uuid = user_id);
 
 CREATE POLICY "Users can update their own settings" ON public.settings
-  FOR UPDATE USING (auth.uid() = user_id);
+  FOR UPDATE USING (auth.uid()::uuid = user_id);
 
 CREATE POLICY "Users can delete their own settings" ON public.settings
-  FOR DELETE USING (auth.uid() = user_id);
+  FOR DELETE USING (auth.uid()::uuid = user_id);
 
 -- Create function to update timestamps
 CREATE OR REPLACE FUNCTION public.update_updated_at_column()

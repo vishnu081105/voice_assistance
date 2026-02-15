@@ -5,13 +5,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
-import { Building2, Loader2, Mail, Lock, User, ShieldCheck, ArrowLeft, CheckCircle2, Eye, EyeOff } from 'lucide-react';
+import { Building2, Loader2, Mail, Lock, User, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { setSetting } from '@/lib/db';
 import { supabase } from '@/integrations/supabase/client';
 
-type AuthStep = 'form' | 'otp-verify';
+// Signup will no longer require OTP verification; users can sign in after account creation.
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -22,8 +21,7 @@ export default function Login() {
   const [doctorName, setDoctorName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
-  const [step, setStep] = useState<AuthStep>('form');
-  const [otpValue, setOtpValue] = useState('');
+  const [step] = useState<'form'>('form');
   const { signIn, user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -100,12 +98,13 @@ export default function Login() {
         if (error) {
           toast({ variant: 'destructive', title: 'Sign up failed', description: error.message });
         } else {
+          // Save the doctor name and return user to sign-in form.
+          // Skip requiring an email verification code.
           localStorage.setItem('pendingDoctorName', doctorName.trim());
-          // Move to OTP verification step
-          setStep('otp-verify');
+          setIsSignUp(false);
           toast({
-            title: 'Verification code sent!',
-            description: `A 6-digit code has been sent to ${email}. Please check your inbox and spam folder.`,
+            title: 'Account created',
+            description: `Your account was created. You can now sign in with ${email}.`,
           });
         }
       } else {
@@ -146,59 +145,7 @@ export default function Login() {
     }
   };
 
-  const handleVerifyOTP = async () => {
-    if (otpValue.length !== 6) {
-      toast({ variant: 'destructive', title: 'Invalid code', description: 'Please enter the full 6-digit verification code.' });
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const { error } = await supabase.auth.verifyOtp({
-        email: email.trim().toLowerCase(),
-        token: otpValue,
-        type: 'signup',
-      });
-
-      if (error) {
-        toast({ variant: 'destructive', title: 'Verification failed', description: error.message });
-      } else {
-        // Save doctor name after verified signup
-        const pendingDoctorName = localStorage.getItem('pendingDoctorName');
-        if (pendingDoctorName) {
-          setTimeout(async () => {
-            try {
-              await setSetting('doctorName', pendingDoctorName);
-              localStorage.removeItem('pendingDoctorName');
-            } catch (err) {
-              console.error('Failed to save doctor name:', err);
-            }
-          }, 1000);
-        }
-        toast({ title: 'Email verified!', description: 'Your account is now active. Welcome to KMCH Hospital.' });
-        navigate('/');
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleResendCode = async () => {
-    setIsLoading(true);
-    try {
-      const { error } = await supabase.auth.resend({
-        type: 'signup',
-        email: email.trim().toLowerCase(),
-      });
-      if (error) {
-        toast({ variant: 'destructive', title: 'Resend failed', description: error.message });
-      } else {
-        toast({ title: 'Code resent!', description: 'A new verification code has been sent to your email.' });
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // OTP-related handlers removed; signup no longer requires a verification code.
 
   // Password strength indicator
   const getPasswordStrength = (pw: string) => {
@@ -233,64 +180,6 @@ export default function Login() {
       </div>
 
       <Card className="relative w-full max-w-md shadow-2xl border-border/50 backdrop-blur-sm">
-        {step === 'otp-verify' ? (
-          <>
-            <CardHeader className="text-center pb-2">
-              <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-                <ShieldCheck className="h-8 w-8 text-primary" />
-              </div>
-              <CardTitle className="text-2xl">Verify Your Email</CardTitle>
-              <CardDescription className="text-base">
-                Enter the 6-digit code sent to<br />
-                <span className="font-medium text-foreground">{email}</span>
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="pt-4 space-y-6">
-              <div className="flex justify-center">
-                <InputOTP maxLength={6} value={otpValue} onChange={setOtpValue}>
-                  <InputOTPGroup>
-                    <InputOTPSlot index={0} />
-                    <InputOTPSlot index={1} />
-                    <InputOTPSlot index={2} />
-                    <InputOTPSlot index={3} />
-                    <InputOTPSlot index={4} />
-                    <InputOTPSlot index={5} />
-                  </InputOTPGroup>
-                </InputOTP>
-              </div>
-
-              <Button
-                onClick={handleVerifyOTP}
-                className="w-full h-11 text-base font-medium shadow-lg shadow-primary/25"
-                disabled={isLoading || otpValue.length !== 6}
-              >
-                {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-                Verify & Continue
-              </Button>
-
-              <div className="text-center space-y-2">
-                <p className="text-sm text-muted-foreground">
-                  Didn't receive a code?{' '}
-                  <button
-                    type="button"
-                    className="font-medium text-primary hover:underline"
-                    onClick={handleResendCode}
-                    disabled={isLoading}
-                  >
-                    Resend
-                  </button>
-                </p>
-                <button
-                  type="button"
-                  className="text-sm text-muted-foreground hover:text-foreground flex items-center justify-center gap-1 mx-auto"
-                  onClick={() => { setStep('form'); setOtpValue(''); }}
-                >
-                  <ArrowLeft className="h-3 w-3" /> Back to signup
-                </button>
-              </div>
-            </CardContent>
-          </>
-        ) : (
           <>
             <CardHeader className="text-center pb-2">
               <CardTitle className="text-2xl">{isSignUp ? 'Create Account' : 'Welcome Back'}</CardTitle>
@@ -450,7 +339,6 @@ export default function Login() {
               </div>
             </CardContent>
           </>
-        )}
       </Card>
 
       <p className="mt-8 text-center text-xs text-muted-foreground">
