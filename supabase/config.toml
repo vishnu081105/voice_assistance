@@ -1,13 +1,1 @@
-project_id = "tpnbolvvrruddaidclrt"
-
-[functions.generate-report]
-verify_jwt = false
-
-[functions.enhance-transcription]
-verify_jwt = false
-
-[functions.process-transcription]
-verify_jwt = false
-
-[functions.whisper-transcribe]
-verify_jwt = false
+project_id = "lvkihvxorqmybntacgkg"
