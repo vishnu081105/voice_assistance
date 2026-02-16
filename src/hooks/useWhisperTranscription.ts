@@ -35,72 +35,61 @@ export function useWhisperTranscription(): UseWhisperTranscriptionReturn {
     setProgress('Preparing audio...');
 
     try {
-      // Get the file extension based on MIME type
-      const mimeType = audioBlob.type;
+      const mimeType = audioBlob.type || '';
       let extension = 'webm';
       if (mimeType.includes('mp4')) extension = 'mp4';
       else if (mimeType.includes('mp3')) extension = 'mp3';
       else if (mimeType.includes('wav')) extension = 'wav';
       else if (mimeType.includes('ogg')) extension = 'ogg';
 
-      // Create FormData with the audio file
       const formData = new FormData();
       formData.append('audio', audioBlob, `recording.${extension}`);
       formData.append('language', 'en');
 
       setProgress('Sending to Whisper AI...');
 
-      // Get auth token
-      const { data: { session } } = await supabase.auth.getSession();
-      const authToken = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      // Get auth token from supabase session or fallback to env key
+      const { data } = await supabase.auth.getSession();
+      const session = (data as any)?.session;
+      const authToken = session?.access_token ?? import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whisper-transcribe`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${authToken}`,
-          },
-          body: formData,
-        }
-      );
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whisper-transcribe`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: formData,
+      });
 
       if (!response.ok) {
         const bodyText = await response.text().catch(() => '');
-        if (response.status === 429) {
-          throw new Error('Rate limit exceeded. Please wait and try again.');
-        }
-        if (response.status === 401) {
-          throw new Error('Authentication failed (401). Check function auth or API key. ' + bodyText);
-        }
-        if (response.status === 402) {
-          throw new Error('Usage limit reached (402). ' + bodyText);
-        }
+        if (response.status === 429) throw new Error('Rate limit exceeded. Please wait and try again.');
+        if (response.status === 401) throw new Error('Authentication failed (401). Check function auth or API key. ' + bodyText);
+        if (response.status === 402) throw new Error('Usage limit reached (402). ' + bodyText);
         throw new Error(`Transcription failed (${response.status}) ${response.statusText} ${bodyText}`);
       }
 
       setProgress('Processing transcription...');
-      // Try to parse JSON safely, fallback to raw text for diagnostics
-      let data: any = null;
       const raw = await response.text().catch(() => '');
+      let dataJson: any = null;
       try {
-        data = raw ? JSON.parse(raw) : null;
+        dataJson = raw ? JSON.parse(raw) : null;
       } catch (e) {
         console.warn('Whisper function returned non-JSON response:', raw);
         throw new Error('Transcription function returned invalid response: ' + raw);
       }
 
-      if (!data || !data.text) {
+      if (!dataJson || !dataJson.text) {
         throw new Error('No transcription received from Whisper: ' + raw);
       }
 
       setProgress('Complete!');
-      
+
       return {
-        text: data.text,
-        duration: data.duration || 0,
-        language: data.language || 'en',
-        segments: data.segments || [],
+        text: dataJson.text,
+        duration: dataJson.duration || 0,
+        language: dataJson.language || 'en',
+        segments: dataJson.segments || [],
       };
 
     } catch (err) {
