@@ -52,7 +52,7 @@ serve(async (req) => {
       );
     }
 
-    const { transcription } = body;
+    const { transcription, patient_name, patient_id } = body;
 
     if (!transcription || typeof transcription !== 'string') {
       return new Response(
@@ -68,6 +68,10 @@ serve(async (req) => {
       );
     }
 
+    // Normalize patient fields if provided
+    const patientName = typeof patient_name === 'string' && patient_name.trim() ? String(patient_name).trim() : null;
+    const patientId = typeof patient_id === 'string' || typeof patient_id === 'number' ? String(patient_id) : null;
+
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       console.error("LOVABLE_API_KEY environment variable is not set");
@@ -77,7 +81,7 @@ serve(async (req) => {
       );
     }
 
-    console.log(`Enhancing transcription of length: ${transcription.length}`);
+    console.log(`Enhancing transcription of length: ${transcription.length}` + (patientId ? ` for patient_id=${patientId}` : '') + (patientName ? ` patient_name=${patientName}` : ''));
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -93,6 +97,8 @@ serve(async (req) => {
             role: "user", 
             content: `Please enhance and correct this medical transcription:\n\n${transcription}` 
           },
+          // Provide patient metadata to the model so it can preserve or reference it where appropriate
+          ...(patientId || patientName ? [{ role: "user", content: `Patient metadata: ${patientId ? `ID: ${patientId}` : ''}${patientId && patientName ? ' | ' : ''}${patientName ? `Name: ${patientName}` : ''}` }] : []),
         ],
         temperature: 0.1, // Low temperature for consistent corrections
         max_tokens: 2000,
@@ -135,10 +141,13 @@ serve(async (req) => {
 
     console.log(`Successfully enhanced transcription. Original: ${transcription.length} chars, Enhanced: ${enhancedText.length} chars`);
 
+    // Return enhanced transcription and echo patient metadata (if provided)
     return new Response(
       JSON.stringify({ 
         enhanced: enhancedText,
         original: transcription,
+        patient_name: patientName,
+        patient_id: patientId,
       }),
       { 
         status: 200, 

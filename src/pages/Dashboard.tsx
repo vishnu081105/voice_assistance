@@ -36,6 +36,7 @@ export default function Dashboard() {
   const [isEditingTranscription, setIsEditingTranscription] = useState(false);
   const [editedTranscript, setEditedTranscript] = useState('');
   const [patientId, setPatientId] = useState('');
+  const [patientName, setPatientName] = useState('');
   const [doctorId, setDoctorId] = useState('');
   const [doctorName, setDoctorName] = useState('');
   const [isEnhancing, setIsEnhancing] = useState(false);
@@ -141,14 +142,6 @@ export default function Dashboard() {
   };
 
   const handleStartRecording = async () => {
-    if (!patientId.trim() || !doctorId.trim()) {
-      toast({
-        variant: 'destructive',
-        title: 'Missing Information',
-        description: 'Please enter both Patient ID and Doctor ID before recording.',
-      });
-      return;
-    }
     setRecordingDuration(0);
     setGeneratedReport('');
     setIsEditingTranscription(false);
@@ -225,15 +218,19 @@ export default function Dashboard() {
     }
     setIsEnhancing(true);
     try {
+      const sessionRes = await supabase.auth.getSession();
+      const session = (sessionRes as any)?.data?.session;
+      const authToken = session?.access_token ?? import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-transcription`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+            Authorization: `Bearer ${authToken}`,
           },
-          body: JSON.stringify({ transcription: textToEnhance, enableDiarization, enhanceTerminology: true }),
+          body: JSON.stringify({ transcription: textToEnhance, enableDiarization, enhanceTerminology: true, patient_id: patientId || undefined, patient_name: patientName || undefined }),
         }
       );
       if (!response.ok) {
@@ -292,13 +289,17 @@ export default function Dashboard() {
     if (doctorName) enhancedTranscription = `Attending Physician: ${doctorName}\n\n${enhancedTranscription}`;
 
     try {
+      const sessionRes2 = await supabase.auth.getSession();
+      const session2 = (sessionRes2 as any)?.data?.session;
+      const authToken2 = session2?.access_token ?? import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-report`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+            Authorization: `Bearer ${authToken2}`,
           },
           body: JSON.stringify({ transcription: enhancedTranscription, reportType }),
         }
@@ -487,6 +488,12 @@ export default function Dashboard() {
                       placeholder="Enter patient ID" 
                       value={patientId} 
                       onChange={(e) => setPatientId(e.target.value)}
+                    />
+                    <Input
+                      placeholder="Enter patient name (optional)"
+                      value={patientName}
+                      onChange={(e) => setPatientName(e.target.value)}
+                      className="mt-2"
                     />
                   </div>
                   <div className="space-y-2">

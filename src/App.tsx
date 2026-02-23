@@ -16,6 +16,7 @@ import Settings from "./pages/Settings";
 import Profile from "./pages/Profile";
 import ReportDetail from "./pages/ReportDetail";
 import NotFound from "./pages/NotFound";
+import SupabaseUsers from "./pages/SupabaseUsers";
 
 const queryClient = new QueryClient();
 
@@ -69,6 +70,14 @@ const App = () => (
                   element={
                     <ProtectedRoute>
                       <ReportDetail />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/supabase-users"
+                  element={
+                    <ProtectedRoute>
+                      <SupabaseUsers />
                     </ProtectedRoute>
                   }
                 />

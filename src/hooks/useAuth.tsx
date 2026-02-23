@@ -20,10 +20,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
-    // Set up auth state listener first
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+
+    // Set up auth state listener
+    const listener = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!mounted) return;
       try {
-        if (!mounted) return;
         setSession(session ?? null);
         setUser(session?.user ?? null);
 
@@ -31,7 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (session?.user) {
           const id = session.user.id;
           const email = session.user.email ?? undefined;
-          const pendingName = localStorage.getItem('pendingDoctorName');
+          const pendingName = typeof window !== 'undefined' ? localStorage.getItem('pendingDoctorName') : null;
           try {
             await supabase.from('users').upsert({ id, email, full_name: pendingName || null }, { onConflict: 'id' });
             if (pendingName) localStorage.removeItem('pendingDoctorName');
@@ -44,23 +45,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    // Then check for existing session
-    supabase.auth
-      .getSession()
-      .then(({ data: { session } }) => {
+    // Check for existing session immediately
+    (async () => {
+      try {
+        const res = await supabase.auth.getSession();
+        const session = (res as any)?.data?.session ?? null;
         if (!mounted) return;
-        setSession(session ?? null);
+        setSession(session);
         setUser(session?.user ?? null);
-      })
-      .catch((err) => console.error('getSession error', err))
-      .finally(() => {
+      } catch (err) {
+        console.error('getSession error', err);
+      } finally {
         if (mounted) setLoading(false);
-      });
+      }
+    })();
 
     return () => {
       mounted = false;
       try {
-        subscription.unsubscribe();
+        // unsubscribe listener if available
+        if ((listener as any)?.data?.subscription?.unsubscribe) {
+          (listener as any).data.subscription.unsubscribe();
+        } else if (typeof (listener as any)?.unsubscribe === 'function') {
+          (listener as any).unsubscribe();
+        }
       } catch (e) {
         /* ignore */
       }

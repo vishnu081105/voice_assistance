@@ -110,6 +110,16 @@ export function Header() {
             <span className="hidden sm:inline">Settings</span>
           </Button>
 
+          <Button
+            variant={isActive('/supabase-users') ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => navigate('/supabase-users')}
+            className={cn('gap-2', isActive('/supabase-users') && 'bg-primary')}
+          >
+            <FileText className="h-4 w-4" />
+            <span className="hidden sm:inline">Users</span>
+          </Button>
+
           <ThemeToggle />
 
           {/* Profile dropdown */}

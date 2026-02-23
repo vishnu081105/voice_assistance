@@ -19,8 +19,18 @@ export default function ResetPassword() {
   useEffect(() => {
     // Check if we have a valid session from the reset link
     const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+      try {
+        const res = await supabase.auth.getSession();
+        const session = (res as any)?.data?.session;
+        if (!session) {
+          toast({
+            variant: 'destructive',
+            title: 'Invalid or expired link',
+            description: 'Please request a new password reset link.',
+          });
+          navigate('/forgot-password');
+        }
+      } catch (err) {
         toast({
           variant: 'destructive',
           title: 'Invalid or expired link',

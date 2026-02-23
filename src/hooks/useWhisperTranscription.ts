@@ -49,8 +49,8 @@ export function useWhisperTranscription(): UseWhisperTranscriptionReturn {
       setProgress('Sending to Whisper AI...');
 
       // Get auth token from supabase session or fallback to env key
-      const { data } = await supabase.auth.getSession();
-      const session = (data as any)?.session;
+      const res = await supabase.auth.getSession();
+      const session = (res as any)?.data?.session;
       const authToken = session?.access_token ?? import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
       const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/whisper-transcribe`, {

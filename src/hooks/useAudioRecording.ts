@@ -113,7 +113,8 @@ export function useAudioRecording(): UseAudioRecordingReturn {
     }
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const res = await supabase.auth.getSession();
+      const session = (res as any)?.data?.session;
       if (!session?.user) {
         setError('User not authenticated');
         return null;
@@ -121,8 +122,8 @@ export function useAudioRecording(): UseAudioRecordingReturn {
 
       const userId = session.user.id;
       const fileName = `${userId}/${reportId}-${Date.now()}.webm`;
-      
-      const { data, error: uploadError } = await supabase.storage
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
         .from('recordings')
         .upload(fileName, audioBlob, {
           contentType: 'audio/webm',
@@ -136,11 +137,17 @@ export function useAudioRecording(): UseAudioRecordingReturn {
       }
 
       // Get the signed URL for the uploaded file
-      const { data: urlData } = await supabase.storage
+      const { data: urlData, error: urlError } = await supabase.storage
         .from('recordings')
-        .createSignedUrl(data.path, 60 * 60 * 24 * 365); // 1 year validity
+        .createSignedUrl((uploadData as any)?.path, 60 * 60 * 24 * 365); // 1 year validity
 
-      return urlData?.signedUrl || null;
+      if (urlError) {
+        console.error('Signed URL error:', urlError);
+        setError('Failed to create download URL');
+        return null;
+      }
+
+      return (urlData as any)?.signedUrl || null;
     } catch (err) {
       console.error('Upload failed:', err);
       setError('Failed to upload recording');

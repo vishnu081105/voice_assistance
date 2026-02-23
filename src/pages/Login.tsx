@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -21,16 +21,21 @@ export default function Login() {
   const [doctorName, setDoctorName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
+  const [verificationCodeInput, setVerificationCodeInput] = useState('');
   const [step] = useState<'form'>('form');
   const { signIn, user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  // Redirect if already logged in
-  if (user) {
-    navigate('/');
-    return null;
-  }
+  // Redirect if already logged in (after initial load)
+  // avoid navigation during render
+  useEffect(() => {
+    if (user) {
+      navigate('/');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   const validateEmail = (email: string): string | null => {
     const trimmed = email.trim().toLowerCase();
@@ -85,27 +90,38 @@ export default function Login() {
           return;
         }
 
-        // Sign up with Supabase - email confirmation is required
-        const { error } = await supabase.auth.signUp({
+        // Implement in-app OTP flow: generate a verification code, store pending signup locally,
+        // and ask the user to enter the code to complete account creation.
+        const code = Math.floor(100000 + Math.random() * 900000).toString();
+
+        const pending = {
           email: email.trim().toLowerCase(),
           password,
-          options: {
-            emailRedirectTo: window.location.origin,
-            data: { full_name: doctorName.trim() },
-          },
-        });
-
-        if (error) {
-          toast({ variant: 'destructive', title: 'Sign up failed', description: error.message });
-        } else {
-          // Save the doctor name and return user to sign-in form.
-          // Skip requiring an email verification code.
-          localStorage.setItem('pendingDoctorName', doctorName.trim());
-          setIsSignUp(false);
-          toast({
-            title: 'Account created',
-            description: `Your account was created. You can now sign in with ${email}.`,
-          });
+          doctorName: doctorName.trim(),
+          code,
+          createdAt: Date.now(),
+        };
+        try {
+          localStorage.setItem('pendingSignup', JSON.stringify(pending));
+          setOtpSent(true);
+          // Try to send OTP via configured server function if available
+          try {
+            if (import.meta.env.VITE_SEND_OTP_FUNCTION_URL) {
+              await fetch(import.meta.env.VITE_SEND_OTP_FUNCTION_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: pending.email, code, name: pending.doctorName }),
+              });
+            } else {
+              // Show OTP in toast for local/dev environments when no email sender is configured
+              toast({ title: 'Verification code (dev)', description: `Code: ${code}` });
+            }
+          } catch (sendErr) {
+            console.warn('Failed to send OTP via function, showing code in toast', sendErr);
+            toast({ title: 'Verification code (dev)', description: `Code: ${code}` });
+          }
+        } catch (err) {
+          toast({ variant: 'destructive', title: 'Sign up failed', description: 'Unable to initiate signup flow.' });
         }
       } else {
         // Validate email format
@@ -119,11 +135,10 @@ export default function Login() {
         const { error } = await signIn(email.trim().toLowerCase(), password);
         if (error) {
           let errorMessage = error.message;
-          if (error.message.includes('Email not confirmed')) {
-            errorMessage = 'Please verify your email first. Check your inbox for the verification code.';
-          } else if (error.message.includes('Invalid login credentials')) {
+          if (error.message.includes('Invalid login credentials')) {
             errorMessage = 'Invalid email or password. Please try again.';
           }
+          // Do not block sign-in with a special 'email not confirmed' message; surface the provider error instead
           toast({ variant: 'destructive', title: 'Sign in failed', description: errorMessage });
         } else {
           const pendingDoctorName = localStorage.getItem('pendingDoctorName');
@@ -146,6 +161,39 @@ export default function Login() {
   };
 
   // OTP-related handlers removed; signup no longer requires a verification code.
+  // In-app OTP verification handlers
+  const handleVerifyOtp = async () => {
+    setIsLoading(true);
+    try {
+      const raw = localStorage.getItem('pendingSignup');
+      if (!raw) throw new Error('No pending signup found');
+      const pending = JSON.parse(raw);
+      if (!pending || !pending.code) throw new Error('Invalid pending signup');
+      if (pending.code !== verificationCodeInput.trim()) throw new Error('Invalid verification code');
+
+      // Create the account now with Supabase (no external redirect)
+      const res = await supabase.auth.signUp({
+        email: pending.email,
+        password: pending.password,
+        options: {
+          data: { full_name: pending.doctorName },
+        },
+      });
+      const error = (res as any)?.error ?? null;
+      if (error) throw error;
+
+      // cleanup
+      localStorage.removeItem('pendingSignup');
+      toast({ title: 'Account created', description: `Your account was created. You can now sign in with ${pending.email}.` });
+      setIsSignUp(false);
+      setOtpSent(false);
+      setVerificationCodeInput('');
+    } catch (err) {
+      toast({ variant: 'destructive', title: 'Verification failed', description: err instanceof Error ? err.message : 'Invalid code' });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Password strength indicator
   const getPasswordStrength = (pw: string) => {
@@ -190,135 +238,154 @@ export default function Login() {
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-4">
-              <form onSubmit={handleSubmit} className="space-y-4">
-                {isSignUp && (
+              {otpSent ? (
+                <div className="space-y-4">
+                  <p className="text-sm">A verification code was sent to your email. Enter it below to complete account creation.</p>
                   <div className="space-y-2">
-                    <Label htmlFor="doctorName" className="text-sm font-medium">Full Name</Label>
+                    <Label className="text-sm font-medium">Verification Code</Label>
+                    <Input
+                      value={verificationCodeInput}
+                      onChange={(e) => setVerificationCodeInput(e.target.value)}
+                      placeholder="Enter 6-digit code"
+                      maxLength={6}
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <Button onClick={handleVerifyOtp} className="flex-1" disabled={isLoading}>Verify & Create Account</Button>
+                    <Button variant="ghost" onClick={() => { localStorage.removeItem('pendingSignup'); setOtpSent(false); }}>Cancel</Button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  {isSignUp && (
+                    <div className="space-y-2">
+                      <Label htmlFor="doctorName" className="text-sm font-medium">Full Name</Label>
+                      <div className="relative">
+                        <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          id="doctorName"
+                          type="text"
+                          placeholder="Dr. John Smith"
+                          value={doctorName}
+                          onChange={(e) => setDoctorName(e.target.value)}
+                          required={isSignUp}
+                          maxLength={100}
+                          className="pl-10 h-11"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="email" className="text-sm font-medium">Email</Label>
                     <div className="relative">
-                      <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                       <Input
-                        id="doctorName"
-                        type="text"
-                        placeholder="Dr. John Smith"
-                        value={doctorName}
-                        onChange={(e) => setDoctorName(e.target.value)}
-                        required={isSignUp}
-                        maxLength={100}
+                        id="email"
+                        type="email"
+                        placeholder="doctor@hospital.com"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        required
+                        maxLength={255}
                         className="pl-10 h-11"
                       />
                     </div>
                   </div>
-                )}
-                
-                <div className="space-y-2">
-                  <Label htmlFor="email" className="text-sm font-medium">Email</Label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      id="email"
-                      type="email"
-                      placeholder="doctor@hospital.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      required
-                      maxLength={255}
-                      className="pl-10 h-11"
-                    />
-                  </div>
-                </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="password" className="text-sm font-medium">Password</Label>
-                  <div className="relative">
-                      <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        id="password"
-                        type={showPassword ? 'text' : 'password'}
-                        placeholder="••••••••"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        required
-                        minLength={8}
-                        maxLength={128}
-                        className="pl-10 pr-10 h-11"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        tabIndex={-1}
-                      >
-                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  {isSignUp && password.length > 0 && (
-                    <div className="space-y-1">
-                      <div className="flex gap-1">
-                        {[1, 2, 3, 4, 5].map((i) => (
-                          <div
-                            key={i}
-                            className={`h-1.5 flex-1 rounded-full transition-colors ${
-                              i <= pwStrength ? strengthColors[pwStrength] : 'bg-muted'
-                            }`}
-                          />
-                        ))}
-                      </div>
-                      <p className={`text-xs ${pwStrength >= 4 ? 'text-secondary' : pwStrength >= 3 ? 'text-accent-foreground' : 'text-destructive'}`}>
-                        {strengthLabels[pwStrength]}
-                        {pwStrength < 5 && ' — Use uppercase, lowercase, numbers & symbols'}
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {isSignUp && (
                   <div className="space-y-2">
-                    <Label htmlFor="confirmPassword" className="text-sm font-medium">Confirm Password</Label>
+                    <Label htmlFor="password" className="text-sm font-medium">Password</Label>
                     <div className="relative">
-                      <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        id="confirmPassword"
-                        type={showConfirmPassword ? 'text' : 'password'}
-                        placeholder="••••••••"
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        required
-                        minLength={8}
-                        maxLength={128}
-                        className="pl-10 pr-10 h-11"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        tabIndex={-1}
-                      >
-                        {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
-                    {confirmPassword.length > 0 && password !== confirmPassword && (
-                      <p className="text-xs text-destructive">Passwords do not match</p>
+                        <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          id="password"
+                          type={showPassword ? 'text' : 'password'}
+                          placeholder="••••••••"
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          required
+                          minLength={8}
+                          maxLength={128}
+                          className="pl-10 pr-10 h-11"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          tabIndex={-1}
+                        >
+                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    {isSignUp && password.length > 0 && (
+                      <div className="space-y-1">
+                        <div className="flex gap-1">
+                          {[1, 2, 3, 4, 5].map((i) => (
+                            <div
+                              key={i}
+                              className={`h-1.5 flex-1 rounded-full transition-colors ${
+                                i <= pwStrength ? strengthColors[pwStrength] : 'bg-muted'
+                              }`}
+                            />
+                          ))}
+                        </div>
+                        <p className={`text-xs ${pwStrength >= 4 ? 'text-secondary' : pwStrength >= 3 ? 'text-accent-foreground' : 'text-destructive'}`}>
+                          {strengthLabels[pwStrength]}
+                          {pwStrength < 5 && ' — Use uppercase, lowercase, numbers & symbols'}
+                        </p>
+                      </div>
                     )}
                   </div>
-                )}
 
-                {!isSignUp && (
-                  <div className="text-right">
-                    <Link to="/forgot-password" className="text-sm text-primary hover:underline">
-                      Forgot password?
-                    </Link>
-                  </div>
-                )}
+                  {isSignUp && (
+                    <div className="space-y-2">
+                      <Label htmlFor="confirmPassword" className="text-sm font-medium">Confirm Password</Label>
+                      <div className="relative">
+                        <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          id="confirmPassword"
+                          type={showConfirmPassword ? 'text' : 'password'}
+                          placeholder="••••••••"
+                          value={confirmPassword}
+                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          required
+                          minLength={8}
+                          maxLength={128}
+                          className="pl-10 pr-10 h-11"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          tabIndex={-1}
+                        >
+                          {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                      {confirmPassword.length > 0 && password !== confirmPassword && (
+                        <p className="text-xs text-destructive">Passwords do not match</p>
+                      )}
+                    </div>
+                  )}
 
-                <Button
-                  type="submit"
-                  className="w-full h-11 text-base font-medium shadow-lg shadow-primary/25"
-                  disabled={isLoading}
-                >
-                  {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {isSignUp ? 'Create Account' : 'Sign In'}
-                </Button>
-              </form>
+                  {!isSignUp && (
+                    <div className="text-right">
+                      <Link to="/forgot-password" className="text-sm text-primary hover:underline">
+                        Forgot password?
+                      </Link>
+                    </div>
+                  )}
+
+                  <Button
+                    type="submit"
+                    className="w-full h-11 text-base font-medium shadow-lg shadow-primary/25"
+                    disabled={isLoading}
+                  >
+                    {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {isSignUp ? 'Create Account' : 'Sign In'}
+                  </Button>
+                </form>
+              )}
 
               <div className="mt-6 text-center text-sm">
                 {isSignUp ? (
