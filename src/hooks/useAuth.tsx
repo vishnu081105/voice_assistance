@@ -34,7 +34,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const email = session.user.email ?? undefined;
           const pendingName = typeof window !== 'undefined' ? localStorage.getItem('pendingDoctorName') : null;
           try {
-            await supabase.from('users').upsert({ id, email, full_name: pendingName || null }, { onConflict: 'id' });
+            await (supabase as any).from('users').upsert({ id, email, full_name: pendingName || null }, { onConflict: 'id' });
             if (pendingName) localStorage.removeItem('pendingDoctorName');
           } catch (err) {
             console.error('Failed to ensure user profile:', err);
@@ -95,7 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       if (data?.user) {
         const id = data.user.id;
-        await supabase.from('users').upsert({ id, email: data.user.email }, { onConflict: 'id' });
+        await (supabase as any).from('users').upsert({ id, email: data.user.email }, { onConflict: 'id' });
       }
     } catch (err) {
       console.error('Failed to create user row after signUp:', err);
