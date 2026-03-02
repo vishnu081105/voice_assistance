@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { getAccessToken, getApiBaseUrl } from '@/lib/apiClient';
 
 interface UseAudioRecordingReturn {
   isRecording: boolean;
@@ -20,6 +20,7 @@ export function useAudioRecording(): UseAudioRecordingReturn {
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const startRecording = useCallback(async () => {
     try {
@@ -33,6 +34,7 @@ export function useAudioRecording(): UseAudioRecordingReturn {
           sampleRate: 44100,
         } 
       });
+      streamRef.current = stream;
       
       const mediaRecorder = new MediaRecorder(stream, {
         mimeType: MediaRecorder.isTypeSupported('audio/webm') 
@@ -56,6 +58,7 @@ export function useAudioRecording(): UseAudioRecordingReturn {
         
         // Stop all tracks
         stream.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
       };
       
       mediaRecorder.onerror = (event) => {
@@ -88,6 +91,11 @@ export function useAudioRecording(): UseAudioRecordingReturn {
         const url = URL.createObjectURL(blob);
         setAudioUrl(url);
         
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+        }
+
         setIsRecording(false);
         resolve(blob);
       };
@@ -99,6 +107,10 @@ export function useAudioRecording(): UseAudioRecordingReturn {
   const resetRecording = useCallback(() => {
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl);
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     }
     setAudioBlob(null);
     setAudioUrl(null);
@@ -113,41 +125,39 @@ export function useAudioRecording(): UseAudioRecordingReturn {
     }
 
     try {
-      const res = await supabase.auth.getSession();
-      const session = (res as any)?.data?.session;
-      if (!session?.user) {
+      const accessToken = getAccessToken();
+      if (!accessToken) {
         setError('User not authenticated');
         return null;
       }
 
-      const userId = session.user.id;
-      const fileName = `${userId}/${reportId}-${Date.now()}.webm`;
+      const formData = new FormData();
+      formData.append('file', audioBlob, `${reportId}-${Date.now()}.webm`);
+      formData.append('reportId', reportId);
 
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('recordings')
-        .upload(fileName, audioBlob, {
-          contentType: 'audio/webm',
-          upsert: false,
-        });
+      const response = await fetch(`${getApiBaseUrl()}/api/storage/recordings`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: formData,
+      });
 
-      if (uploadError) {
-        console.error('Upload error:', uploadError);
-        setError(`Failed to upload recording: ${uploadError.message}`);
+      const bodyText = await response.text().catch(() => '');
+      let payload: any = {};
+      try {
+        payload = bodyText ? JSON.parse(bodyText) : {};
+      } catch {
+        payload = {};
+      }
+
+      if (!response.ok) {
+        const message = payload?.error?.message || payload?.error || `Failed to upload recording (${response.status})`;
+        setError(message);
         return null;
       }
 
-      // Get the signed URL for the uploaded file
-      const { data: urlData, error: urlError } = await supabase.storage
-        .from('recordings')
-        .createSignedUrl((uploadData as any)?.path, 60 * 60 * 24 * 365); // 1 year validity
-
-      if (urlError) {
-        console.error('Signed URL error:', urlError);
-        setError('Failed to create download URL');
-        return null;
-      }
-
-      return (urlData as any)?.signedUrl || null;
+      return payload?.data?.publicUrl || null;
     } catch (err) {
       console.error('Upload failed:', err);
       setError('Failed to upload recording');

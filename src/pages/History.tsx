@@ -101,7 +101,7 @@ ${report.reportContent}
       
       <main className="container max-w-4xl py-8">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold">History</h1>
+          <h1 className="text-3xl font-bold">Report</h1>
           <p className="mt-2 text-muted-foreground">
             View and manage your saved transcriptions and reports
           </p>

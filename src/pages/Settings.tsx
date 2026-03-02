@@ -124,9 +124,9 @@ export default function Settings() {
       
       <main className="container max-w-2xl py-8">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold">Settings</h1>
+          <h1 className="text-3xl font-bold">Doctor</h1>
           <p className="mt-2 text-muted-foreground">
-            Configure your transcription preferences
+            Configure your profile and transcription preferences
           </p>
         </div>
 

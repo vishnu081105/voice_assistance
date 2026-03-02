@@ -21,12 +21,22 @@ import {
   Users, Play, Pause, Volume2, Zap, FileText, Search, Database, 
   Stethoscope, ClipboardList, Calendar, XCircle, Activity, User, Clock
 } from 'lucide-react';
-import { ReportType, saveReport, getSetting, updateReport } from '@/lib/db';
+import {
+  GeneratedReport,
+  ReportType,
+  getPatientById,
+  getReportStats,
+  getSetting,
+  saveReport,
+  searchReportsByPatient,
+  updateReport,
+  upsertPatient,
+} from '@/lib/db';
 import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { getAccessToken, getApiBaseUrl } from '@/lib/apiClient';
 
 export default function Dashboard() {
   const [reportType, setReportType] = useState<ReportType>('general');
@@ -37,6 +47,14 @@ export default function Dashboard() {
   const [editedTranscript, setEditedTranscript] = useState('');
   const [patientId, setPatientId] = useState('');
   const [patientName, setPatientName] = useState('');
+  const [patientAge, setPatientAge] = useState('');
+  const [patientGender, setPatientGender] = useState('');
+  const [patientPhone, setPatientPhone] = useState('');
+  const [patientAddress, setPatientAddress] = useState('');
+  const [patientMedicalHistory, setPatientMedicalHistory] = useState('');
+  const [patientAllergies, setPatientAllergies] = useState('');
+  const [patientDiagnosisHistory, setPatientDiagnosisHistory] = useState('');
+  const [isPatientLookupLoading, setIsPatientLookupLoading] = useState(false);
   const [doctorId, setDoctorId] = useState('');
   const [doctorName, setDoctorName] = useState('');
   const [isEnhancing, setIsEnhancing] = useState(false);
@@ -50,6 +68,8 @@ export default function Dashboard() {
   const [treatmentPlan, setTreatmentPlan] = useState('');
   const [followupDate, setFollowupDate] = useState('');
   const [activeResultTab, setActiveResultTab] = useState('original');
+  const [generatedStructuredReport, setGeneratedStructuredReport] = useState<GeneratedReport | null>(null);
+  const [generatedReportId, setGeneratedReportId] = useState<string | null>(null);
   const [searchPatientId, setSearchPatientId] = useState('');
   const [patientRecords, setPatientRecords] = useState<any[]>([]);
   const [selectedRecordIndex, setSelectedRecordIndex] = useState<number | null>(null);
@@ -58,6 +78,7 @@ export default function Dashboard() {
   const [allPatientIds, setAllPatientIds] = useState<string[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const patientLookupTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -122,20 +143,82 @@ export default function Dashboard() {
     };
   }, [isListening]);
 
+  const applyPatientDetails = (patient: any) => {
+    setPatientName(patient?.fullName || '');
+    setPatientAge(patient?.age !== undefined && patient?.age !== null ? String(patient.age) : '');
+    setPatientGender(patient?.gender || '');
+    setPatientPhone(patient?.phone || '');
+    setPatientAddress(patient?.address || '');
+    setPatientMedicalHistory(patient?.medicalHistory || '');
+    setPatientAllergies(patient?.allergies || '');
+    setPatientDiagnosisHistory(patient?.diagnosisHistory || '');
+  };
+
+  const clearPatientDetails = () => {
+    setPatientName('');
+    setPatientAge('');
+    setPatientGender('');
+    setPatientPhone('');
+    setPatientAddress('');
+    setPatientMedicalHistory('');
+    setPatientAllergies('');
+    setPatientDiagnosisHistory('');
+  };
+
+  const fetchPatientDetails = async (id: string, showToast = false) => {
+    const normalizedId = id.trim();
+    if (!normalizedId) return;
+    setIsPatientLookupLoading(true);
+    try {
+      const existingPatient = await getPatientById(normalizedId);
+      if (existingPatient) {
+        applyPatientDetails(existingPatient);
+        if (showToast) {
+          toast({
+            title: 'Patient loaded',
+            description: `Loaded existing details for ${normalizedId}.`,
+          });
+        }
+      } else if (showToast) {
+        toast({
+          title: 'New patient',
+          description: 'No existing record found. Enter details and continue.',
+        });
+      }
+    } catch (err) {
+      if (showToast) {
+        toast({
+          variant: 'destructive',
+          title: 'Patient fetch failed',
+          description: 'Could not fetch patient details right now.',
+        });
+      }
+    } finally {
+      setIsPatientLookupLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (patientLookupTimeoutRef.current) clearTimeout(patientLookupTimeoutRef.current);
+    if (!patientId.trim()) {
+      clearPatientDetails();
+      return;
+    }
+    patientLookupTimeoutRef.current = setTimeout(() => {
+      fetchPatientDetails(patientId);
+    }, 450);
+    return () => {
+      if (patientLookupTimeoutRef.current) clearTimeout(patientLookupTimeoutRef.current);
+    };
+  }, [patientId]);
+
   const fetchDatabaseStats = async () => {
     if (!user) return;
     try {
-      const { data, count } = await supabase
-        .from('reports')
-        .select('patient_id', { count: 'exact' })
-        .eq('user_id', user.id);
-      
-      if (data) {
-        const uniquePatients = [...new Set(data.map(r => r.patient_id).filter(Boolean))];
-        setTotalPatients(uniquePatients.length);
-        setTotalRecords(count || 0);
-        setAllPatientIds(uniquePatients as string[]);
-      }
+      const stats = await getReportStats();
+      setTotalPatients(stats.totalPatients);
+      setTotalRecords(stats.totalRecords);
+      setAllPatientIds(stats.allPatientIds);
     } catch (err) {
       console.error('Failed to fetch stats:', err);
     }
@@ -144,6 +227,8 @@ export default function Dashboard() {
   const handleStartRecording = async () => {
     setRecordingDuration(0);
     setGeneratedReport('');
+    setGeneratedStructuredReport(null);
+    setGeneratedReportId(null);
     setIsEditingTranscription(false);
     setEditedTranscript('');
     setDetectedSpeakers([]);
@@ -168,20 +253,19 @@ export default function Dashboard() {
       });
       
       const result = await whisperTranscribe(recordedBlob);
+      setShowResults(true);
       if (result && result.text) {
         setWhisperTranscript(result.text);
         setEditedTranscript(result.text);
-        setShowResults(true);
         toast({
           title: 'Whisper Transcription Complete',
           description: `Transcribed ${Math.round(result.duration)}s of audio with high accuracy.`,
         });
-      } else if (whisperError) {
-        setShowResults(true);
+      } else {
         toast({
           variant: 'destructive',
           title: 'Whisper Transcription Failed',
-          description: whisperError || 'Falling back to live transcription.',
+          description: whisperError || 'Transcription failed. You can still edit or retry.',
         });
       }
     } else {
@@ -194,6 +278,8 @@ export default function Dashboard() {
     resetRecording();
     setShowResults(false);
     setGeneratedReport('');
+    setGeneratedStructuredReport(null);
+    setGeneratedReportId(null);
     setRecordingDuration(0);
     setIsEditingTranscription(false);
     setEditedTranscript('');
@@ -210,6 +296,24 @@ export default function Dashboard() {
     toast({ title: 'Transcription saved', description: 'Your edits have been saved.' });
   };
 
+  const upsertCurrentPatient = async () => {
+    const normalizedPatientId = patientId.trim();
+    if (!normalizedPatientId) return;
+
+    const parsedAge = Number(patientAge);
+    await upsertPatient({
+      patientId: normalizedPatientId,
+      fullName: patientName || undefined,
+      age: Number.isFinite(parsedAge) && patientAge !== '' ? parsedAge : undefined,
+      gender: patientGender || undefined,
+      phone: patientPhone || undefined,
+      address: patientAddress || undefined,
+      medicalHistory: patientMedicalHistory || undefined,
+      allergies: patientAllergies || undefined,
+      diagnosisHistory: patientDiagnosisHistory || undefined,
+    });
+  };
+
   const handleEnhanceTranscription = async () => {
     const textToEnhance = editedTranscript || transcript;
     if (!textToEnhance.trim()) {
@@ -218,19 +322,24 @@ export default function Dashboard() {
     }
     setIsEnhancing(true);
     try {
-      const sessionRes = await supabase.auth.getSession();
-      const session = (sessionRes as any)?.data?.session;
-      const authToken = session?.access_token ?? import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      const authToken = getAccessToken();
+      if (!authToken) throw new Error('User not authenticated.');
 
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-transcription`,
+        `${getApiBaseUrl()}/functions/v1/process-transcription`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${authToken}`,
           },
-          body: JSON.stringify({ transcription: textToEnhance, enableDiarization, enhanceTerminology: true, patient_id: patientId || undefined, patient_name: patientName || undefined }),
+          body: JSON.stringify({
+            transcription: textToEnhance,
+            enableDiarization,
+            enhanceTerminology: true,
+            patient_id: patientId || undefined,
+            patient_name: patientName || undefined,
+          }),
         }
       );
       if (!response.ok) {
@@ -267,12 +376,23 @@ export default function Dashboard() {
   };
 
   const currentTranscript = editedTranscript || transcript;
+  const hasTranscription = currentTranscript.trim().length > 0;
   const wordCount = (currentTranscript + ' ' + interimTranscript).trim().split(/\s+/).filter(Boolean).length;
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const formatStructuredReportText = (report: GeneratedReport) => {
+    return [
+      `Summary:\n${report.summary || 'N/A'}`,
+      `Symptoms:\n${report.symptoms.length > 0 ? report.symptoms.map((item) => `- ${item}`).join('\n') : '- N/A'}`,
+      `Diagnosis:\n${report.diagnosis || 'N/A'}`,
+      `Treatment Plan:\n${report.treatment_plan || 'N/A'}`,
+      `Recommendations:\n${report.recommendations.length > 0 ? report.recommendations.map((item) => `- ${item}`).join('\n') : '- N/A'}`,
+    ].join('\n\n');
   };
 
   const generateReport = async () => {
@@ -283,76 +403,96 @@ export default function Dashboard() {
     }
     setIsGenerating(true);
     setGeneratedReport('');
-
-    let enhancedTranscription = textToProcess;
-    if (patientId) enhancedTranscription = `Patient ID: ${patientId}\n\n${enhancedTranscription}`;
-    if (doctorName) enhancedTranscription = `Attending Physician: ${doctorName}\n\n${enhancedTranscription}`;
+    setGeneratedStructuredReport(null);
+    setGeneratedReportId(null);
 
     try {
-      const sessionRes2 = await supabase.auth.getSession();
-      const session2 = (sessionRes2 as any)?.data?.session;
-      const authToken2 = session2?.access_token ?? import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      if (patientId.trim()) {
+        await upsertCurrentPatient();
+      }
+
+      const authToken2 = getAccessToken();
+      if (!authToken2) throw new Error('User not authenticated.');
 
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-report`,
+        `${getApiBaseUrl()}/functions/v1/generate-report`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${authToken2}`,
           },
-          body: JSON.stringify({ transcription: enhancedTranscription, reportType }),
+          body: JSON.stringify({
+            transcription: textToProcess,
+            reportType,
+            patient_id: patientId || undefined,
+            doctor_id: doctorId || undefined,
+            doctor_name: doctorName || undefined,
+            patient_details: {
+              patient_id: patientId || undefined,
+              full_name: patientName || undefined,
+              age: patientAge ? Number(patientAge) : undefined,
+              gender: patientGender || undefined,
+              phone: patientPhone || undefined,
+              address: patientAddress || undefined,
+              medical_history: patientMedicalHistory || undefined,
+              allergies: patientAllergies || undefined,
+              diagnosis_history: patientDiagnosisHistory || undefined,
+            },
+            doctor_details: {
+              doctor_id: doctorId || undefined,
+              doctor_name: doctorName || undefined,
+            },
+            persist: true,
+          }),
         }
       );
+
+      const rawBody = await response.text().catch(() => '');
+      let responseData: any = {};
+      try {
+        responseData = rawBody ? JSON.parse(rawBody) : {};
+      } catch {
+        throw new Error(`Invalid AI response: ${rawBody || 'empty response'}`);
+      }
 
       if (!response.ok) {
         if (response.status === 429) throw new Error('Rate limit exceeded.');
         if (response.status === 402) throw new Error('AI usage limit reached.');
-        throw new Error(`Failed to generate report (${response.status})`);
+        const serverMessage = responseData?.error?.message || responseData?.error || `Failed to generate report (${response.status})`;
+        throw new Error(serverMessage);
       }
 
-      if (!response.body) throw new Error('No response body');
+      const structured: GeneratedReport = {
+        summary: typeof responseData.summary === 'string' ? responseData.summary : '',
+        symptoms: Array.isArray(responseData.symptoms) ? responseData.symptoms.filter((item: any) => typeof item === 'string') : [],
+        diagnosis: typeof responseData.diagnosis === 'string' ? responseData.diagnosis : '',
+        treatment_plan: typeof responseData.treatment_plan === 'string' ? responseData.treatment_plan : '',
+        recommendations: Array.isArray(responseData.recommendations)
+          ? responseData.recommendations.filter((item: any) => typeof item === 'string')
+          : [],
+      };
 
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let textBuffer = '';
-      let reportText = '';
+      const hasGeneratedContent =
+        Boolean(structured.summary) ||
+        Boolean(structured.diagnosis) ||
+        Boolean(structured.treatment_plan) ||
+        structured.symptoms.length > 0 ||
+        structured.recommendations.length > 0;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        textBuffer += decoder.decode(value, { stream: true });
-        const lines = textBuffer.split('\n');
-        textBuffer = lines.pop() || '';
-        for (const rawLine of lines) {
-          const line = rawLine.replace(/\r$/, '');
-          if (line.startsWith(':') || line.trim() === '') continue;
-          if (!line.startsWith('data: ')) continue;
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr === '[DONE]') continue;
-          try {
-            const parsed = JSON.parse(jsonStr);
-            const content = parsed.choices?.[0]?.delta?.content;
-            if (content) {
-              reportText += content.replace(/\*+/g, '').replace(/#+/g, '');
-              setGeneratedReport(reportText);
-            }
-          } catch {
-            // skip malformed
-          }
-        }
+      if (!hasGeneratedContent) {
+        throw new Error('Generated report is empty.');
       }
 
-      if (textBuffer.trim() && textBuffer.startsWith('data: ') && textBuffer.slice(6).trim() !== '[DONE]') {
-        try {
-          const parsed = JSON.parse(textBuffer.slice(6).trim());
-          const content = parsed.choices?.[0]?.delta?.content;
-          if (content) {
-            reportText += content.replace(/\*+/g, '').replace(/#+/g, '');
-            setGeneratedReport(reportText);
-          }
-        } catch { /* ignore */ }
-      }
+      setGeneratedStructuredReport(structured);
+      const reportText =
+        typeof responseData.report_content === 'string' && responseData.report_content.trim()
+          ? responseData.report_content
+          : formatStructuredReportText(structured);
+      setGeneratedReport(reportText);
+      setGeneratedReportId(typeof responseData.report_id === 'string' ? responseData.report_id : null);
+      setShowResults(true);
+      setActiveResultTab('report');
     } catch (err) {
       toast({ variant: 'destructive', title: 'Generation failed', description: err instanceof Error ? err.message : 'Unknown error' });
     } finally {
@@ -366,6 +506,8 @@ export default function Dashboard() {
       return;
     }
     try {
+      await upsertCurrentPatient();
+
       const report = {
         transcription: editedTranscript || transcript,
         reportContent: generatedReport,
@@ -373,10 +515,19 @@ export default function Dashboard() {
         duration: recordingDuration,
         wordCount,
         patientId: patientId || undefined,
+        doctorId: doctorId || undefined,
         doctorName: doctorName || doctorId || undefined,
+        generatedReport: generatedStructuredReport || undefined,
         audioUrl: undefined as string | undefined,
       };
-      const reportId = await saveReport(report);
+
+      let reportId = generatedReportId;
+      if (reportId) {
+        await updateReport(reportId, report);
+      } else {
+        reportId = await saveReport(report);
+      }
+
       if (audioBlob && reportId) {
         const uploadedUrl = await uploadRecording(reportId);
         if (uploadedUrl) await updateReport(reportId, { audioUrl: uploadedUrl });
@@ -385,21 +536,18 @@ export default function Dashboard() {
       handleCancelRecording();
       fetchDatabaseStats();
     } catch (err) {
-      toast({ variant: 'destructive', title: 'Save failed', description: 'Failed to save report.' });
+      toast({
+        variant: 'destructive',
+        title: 'Save failed',
+        description: err instanceof Error ? err.message : 'Failed to save report.',
+      });
     }
   };
 
   const handleSearchPatient = async () => {
     if (!searchPatientId.trim()) return;
     try {
-      const { data, error } = await supabase
-        .from('reports')
-        .select('*')
-        .eq('patient_id', searchPatientId)
-        .eq('user_id', user?.id || '')
-        .order('created_at', { ascending: false });
-      
-      if (error) throw error;
+      const data = await searchReportsByPatient(searchPatientId);
       if (data && data.length > 0) {
         setPatientRecords(data);
         setSelectedRecordIndex(null);
@@ -484,13 +632,25 @@ export default function Dashboard() {
                       <User className="h-4 w-4" />
                       Patient ID
                     </Label>
-                    <Input 
-                      placeholder="Enter patient ID" 
-                      value={patientId} 
-                      onChange={(e) => setPatientId(e.target.value)}
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Enter patient ID"
+                        value={patientId}
+                        onChange={(e) => setPatientId(e.target.value)}
+                        onBlur={() => fetchPatientDetails(patientId, true)}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => fetchPatientDetails(patientId, true)}
+                        disabled={isPatientLookupLoading || !patientId.trim()}
+                      >
+                        {isPatientLookupLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                      </Button>
+                    </div>
                     <Input
-                      placeholder="Enter patient name (optional)"
+                      placeholder="Patient name"
                       value={patientName}
                       onChange={(e) => setPatientName(e.target.value)}
                       className="mt-2"
@@ -505,6 +665,80 @@ export default function Dashboard() {
                       placeholder="Enter doctor ID" 
                       value={doctorId} 
                       onChange={(e) => setDoctorId(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label className="font-semibold text-muted-foreground">Age</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      placeholder="Age"
+                      value={patientAge}
+                      onChange={(e) => setPatientAge(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-semibold text-muted-foreground">Gender</Label>
+                    <Select value={patientGender || undefined} onValueChange={setPatientGender}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="male">Male</SelectItem>
+                        <SelectItem value="female">Female</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label className="font-semibold text-muted-foreground">Phone</Label>
+                    <Input
+                      placeholder="Phone number"
+                      value={patientPhone}
+                      onChange={(e) => setPatientPhone(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="font-semibold text-muted-foreground">Address</Label>
+                  <Textarea
+                    rows={2}
+                    placeholder="Address"
+                    value={patientAddress}
+                    onChange={(e) => setPatientAddress(e.target.value)}
+                  />
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label className="font-semibold text-muted-foreground">Medical History</Label>
+                    <Textarea
+                      rows={3}
+                      placeholder="Medical history"
+                      value={patientMedicalHistory}
+                      onChange={(e) => setPatientMedicalHistory(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-semibold text-muted-foreground">Allergies</Label>
+                    <Textarea
+                      rows={3}
+                      placeholder="Allergies"
+                      value={patientAllergies}
+                      onChange={(e) => setPatientAllergies(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-semibold text-muted-foreground">Diagnosis History</Label>
+                    <Textarea
+                      rows={3}
+                      placeholder="Diagnosis history"
+                      value={patientDiagnosisHistory}
+                      onChange={(e) => setPatientDiagnosisHistory(e.target.value)}
                     />
                   </div>
                 </div>
@@ -612,7 +846,7 @@ export default function Dashboard() {
                 {error && <p className="text-sm text-destructive">{error}</p>}
 
                 {/* ===== RECORDING RESULTS ===== */}
-                {showResults && !isListening && (currentTranscript || generatedReport) && (
+                {!isListening && (
                   <>
                     <div className="border-t pt-4" />
                     <h3 className="flex items-center gap-2 font-semibold text-lg border-l-4 border-primary pl-3">
@@ -672,19 +906,21 @@ export default function Dashboard() {
                         ) : (
                           <>
                             <div className="bg-secondary/30 rounded-lg border p-4 min-h-[150px] max-h-[400px] overflow-y-auto font-mono text-sm whitespace-pre-wrap">
-                              {(editedTranscript || transcript).split('\n').map((line, i) => {
-                                const isDoc = line.startsWith('DOCTOR:');
-                                const isPat = line.startsWith('PATIENT:');
-                                if (isDoc || isPat) {
-                                  return (
-                                    <p key={i} className={cn("rounded px-2 py-1 mb-1", isDoc && "bg-primary/10 border-l-2 border-primary", isPat && "bg-secondary border-l-2 border-muted-foreground")}>
-                                      <span className={cn("font-semibold", isDoc && "text-primary", isPat && "text-muted-foreground")}>{isDoc ? 'DOCTOR:' : 'PATIENT:'}</span>
-                                      <span>{line.replace(/^(DOCTOR:|PATIENT:)/, '')}</span>
-                                    </p>
-                                  );
-                                }
-                                return line ? <p key={i}>{line}</p> : null;
-                              })}
+                              {(editedTranscript || transcript)
+                                ? (editedTranscript || transcript).split('\n').map((line, i) => {
+                                    const isDoc = line.startsWith('DOCTOR:');
+                                    const isPat = line.startsWith('PATIENT:');
+                                    if (isDoc || isPat) {
+                                      return (
+                                        <p key={i} className={cn("rounded px-2 py-1 mb-1", isDoc && "bg-primary/10 border-l-2 border-primary", isPat && "bg-secondary border-l-2 border-muted-foreground")}>
+                                          <span className={cn("font-semibold", isDoc && "text-primary", isPat && "text-muted-foreground")}>{isDoc ? 'DOCTOR:' : 'PATIENT:'}</span>
+                                          <span>{line.replace(/^(DOCTOR:|PATIENT:)/, '')}</span>
+                                        </p>
+                                      );
+                                    }
+                                    return line ? <p key={i}>{line}</p> : null;
+                                  })
+                                : <p className="text-muted-foreground">No transcription yet. Start recording to continue.</p>}
                             </div>
                             <div className="flex gap-2 mt-3">
                               <Button variant="outline" size="sm" onClick={() => setIsEditingTranscription(true)} className="gap-2">
@@ -706,7 +942,7 @@ export default function Dashboard() {
                           <Wand2 className="h-4 w-4 text-primary" />
                           AI-Enhanced Transcript
                         </h4>
-                        <Button onClick={handleEnhanceTranscription} disabled={isEnhancing} className="gap-2 mb-3">
+                        <Button onClick={handleEnhanceTranscription} disabled={isEnhancing || !hasTranscription} className="gap-2 mb-3">
                           {isEnhancing ? <><Loader2 className="h-4 w-4 animate-spin" /> Processing...</> : <><Wand2 className="h-4 w-4" /> Enhance with AI</>}
                         </Button>
                         {detectedSpeakers.length > 0 && (
@@ -753,7 +989,7 @@ export default function Dashboard() {
                           <Label>Report Type</Label>
                           <ReportTypeSelector selectedType={reportType} onSelect={setReportType} />
                         </div>
-                        <Button onClick={generateReport} disabled={isGenerating} className="w-full gap-2 h-12 text-base btn-glow" size="lg">
+                        <Button onClick={generateReport} disabled={isGenerating || !hasTranscription} className="w-full gap-2 h-12 text-base btn-glow" size="lg">
                           {isGenerating ? <><Loader2 className="h-5 w-5 animate-spin" /> Generating Report...</> : <><Sparkles className="h-5 w-5" /> Generate AI Report</>}
                         </Button>
                         {generatedReport && (

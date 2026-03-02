@@ -13,6 +13,7 @@ import ResetPassword from "./pages/ResetPassword";
 import Dashboard from "./pages/Dashboard";
 import History from "./pages/History";
 import Settings from "./pages/Settings";
+import Patient from "./pages/Patient";
 import Profile from "./pages/Profile";
 import ReportDetail from "./pages/ReportDetail";
 import NotFound from "./pages/NotFound";
@@ -54,6 +55,30 @@ const App = () => (
                   element={
                     <ProtectedRoute>
                       <Settings />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/doctor"
+                  element={
+                    <ProtectedRoute>
+                      <Settings />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/patient"
+                  element={
+                    <ProtectedRoute>
+                      <Patient />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/report"
+                  element={
+                    <ProtectedRoute>
+                      <History />
                     </ProtectedRoute>
                   }
                 />

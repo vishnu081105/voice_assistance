@@ -1,0 +1,87 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../database/app.db"
+}
+
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique
+  full_name         String?
+  password_hash     String
+  reset_token       String?
+  reset_token_until DateTime?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+  reports           Report[]
+  patients          Patient[]
+  templates         Template[]
+  settings          Setting[]
+}
+
+model Report {
+  id             String   @id @default(uuid())
+  user_id        String
+  transcription  String
+  report_content String
+  report_type    String   @default("general")
+  duration       Int      @default(0)
+  word_count     Int      @default(0)
+  patient_id     String?
+  doctor_id      String?
+  doctor_name    String?
+  audio_url      String?
+  generated_report String?
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+  user           User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([patient_id])
+}
+
+model Patient {
+  patient_id         String   @id
+  user_id            String
+  full_name          String?
+  age                Int?
+  gender             String?
+  phone              String?
+  address            String?
+  medical_history    String?
+  allergies          String?
+  diagnosis_history  String?
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+  user               User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+}
+
+model Template {
+  id         String   @id @default(uuid())
+  user_id    String
+  name       String
+  content    String
+  category   String   @default("General")
+  created_at DateTime @default(now())
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+}
+
+model Setting {
+  id         String   @id @default(uuid())
+  user_id    String
+  key        String
+  value      String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, key])
+  @@index([user_id])
+}

@@ -1,27 +1,30 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Activity, Loader2, Lock, CheckCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { getSession, resetPasswordWithToken, updateCurrentUserPassword } from '@/lib/authClient';
 
 export default function ResetPassword() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { toast } = useToast();
 
   useEffect(() => {
-    // Check if we have a valid session from the reset link
+    const tokenFromLink = searchParams.get('token');
+    if (tokenFromLink) return;
+
+    // Check if we have a valid session when updating password from an authenticated account
     const checkSession = async () => {
       try {
-        const res = await supabase.auth.getSession();
-        const session = (res as any)?.data?.session;
+        const session = await getSession();
         if (!session) {
           toast({
             variant: 'destructive',
@@ -40,7 +43,7 @@ export default function ResetPassword() {
       }
     };
     checkSession();
-  }, [navigate, toast]);
+  }, [navigate, searchParams, toast]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,7 +69,10 @@ export default function ResetPassword() {
     setIsLoading(true);
 
     try {
-      const { error } = await supabase.auth.updateUser({ password });
+      const tokenFromLink = searchParams.get('token');
+      const { error } = tokenFromLink
+        ? await resetPasswordWithToken(tokenFromLink, password)
+        : await updateCurrentUserPassword(password);
 
       if (error) {
         toast({

@@ -8,7 +8,6 @@ import { Label } from '@/components/ui/label';
 import { Building2, Loader2, Mail, Lock, User, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { setSetting } from '@/lib/db';
-import { supabase } from '@/integrations/supabase/client';
 
 // Signup will no longer require OTP verification; users can sign in after account creation.
 
@@ -21,10 +20,7 @@ export default function Login() {
   const [doctorName, setDoctorName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
-  const [otpSent, setOtpSent] = useState(false);
-  const [verificationCodeInput, setVerificationCodeInput] = useState('');
-  const [step] = useState<'form'>('form');
-  const { signIn, user } = useAuth();
+  const { signIn, signUp, user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -90,38 +86,18 @@ export default function Login() {
           return;
         }
 
-        // Implement in-app OTP flow: generate a verification code, store pending signup locally,
-        // and ask the user to enter the code to complete account creation.
-        const code = Math.floor(100000 + Math.random() * 900000).toString();
-
-        const pending = {
-          email: email.trim().toLowerCase(),
-          password,
-          doctorName: doctorName.trim(),
-          code,
-          createdAt: Date.now(),
-        };
-        try {
-          localStorage.setItem('pendingSignup', JSON.stringify(pending));
-          setOtpSent(true);
-          // Try to send OTP via configured server function if available
-          try {
-            if (import.meta.env.VITE_SEND_OTP_FUNCTION_URL) {
-              await fetch(import.meta.env.VITE_SEND_OTP_FUNCTION_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: pending.email, code, name: pending.doctorName }),
-              });
-            } else {
-              // Show OTP in toast for local/dev environments when no email sender is configured
-              toast({ title: 'Verification code (dev)', description: `Code: ${code}` });
-            }
-          } catch (sendErr) {
-            console.warn('Failed to send OTP via function, showing code in toast', sendErr);
-            toast({ title: 'Verification code (dev)', description: `Code: ${code}` });
-          }
-        } catch (err) {
-          toast({ variant: 'destructive', title: 'Sign up failed', description: 'Unable to initiate signup flow.' });
+        const normalizedEmail = email.trim().toLowerCase();
+        const { error } = await signUp(normalizedEmail, password, doctorName.trim());
+        if (error) {
+          toast({ variant: 'destructive', title: 'Sign up failed', description: error.message });
+        } else {
+          toast({
+            title: 'Account created',
+            description: `Your account was created. You can now sign in with ${normalizedEmail}.`,
+          });
+          setIsSignUp(false);
+          setPassword('');
+          setConfirmPassword('');
         }
       } else {
         // Validate email format
@@ -161,39 +137,7 @@ export default function Login() {
   };
 
   // OTP-related handlers removed; signup no longer requires a verification code.
-  // In-app OTP verification handlers
-  const handleVerifyOtp = async () => {
-    setIsLoading(true);
-    try {
-      const raw = localStorage.getItem('pendingSignup');
-      if (!raw) throw new Error('No pending signup found');
-      const pending = JSON.parse(raw);
-      if (!pending || !pending.code) throw new Error('Invalid pending signup');
-      if (pending.code !== verificationCodeInput.trim()) throw new Error('Invalid verification code');
-
-      // Create the account now with Supabase (no external redirect)
-      const res = await supabase.auth.signUp({
-        email: pending.email,
-        password: pending.password,
-        options: {
-          data: { full_name: pending.doctorName },
-        },
-      });
-      const error = (res as any)?.error ?? null;
-      if (error) throw error;
-
-      // cleanup
-      localStorage.removeItem('pendingSignup');
-      toast({ title: 'Account created', description: `Your account was created. You can now sign in with ${pending.email}.` });
-      setIsSignUp(false);
-      setOtpSent(false);
-      setVerificationCodeInput('');
-    } catch (err) {
-      toast({ variant: 'destructive', title: 'Verification failed', description: err instanceof Error ? err.message : 'Invalid code' });
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // Signup now creates account directly without verification code.
 
   // Password strength indicator
   const getPasswordStrength = (pw: string) => {
@@ -238,25 +182,7 @@ export default function Login() {
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-4">
-              {otpSent ? (
-                <div className="space-y-4">
-                  <p className="text-sm">A verification code was sent to your email. Enter it below to complete account creation.</p>
-                  <div className="space-y-2">
-                    <Label className="text-sm font-medium">Verification Code</Label>
-                    <Input
-                      value={verificationCodeInput}
-                      onChange={(e) => setVerificationCodeInput(e.target.value)}
-                      placeholder="Enter 6-digit code"
-                      maxLength={6}
-                    />
-                  </div>
-                  <div className="flex gap-2">
-                    <Button onClick={handleVerifyOtp} className="flex-1" disabled={isLoading}>Verify & Create Account</Button>
-                    <Button variant="ghost" onClick={() => { localStorage.removeItem('pendingSignup'); setOtpSent(false); }}>Cancel</Button>
-                  </div>
-                </div>
-              ) : (
-                <form onSubmit={handleSubmit} className="space-y-4">
+              <form onSubmit={handleSubmit} className="space-y-4">
                   {isSignUp && (
                     <div className="space-y-2">
                       <Label htmlFor="doctorName" className="text-sm font-medium">Full Name</Label>
@@ -385,7 +311,6 @@ export default function Login() {
                     {isSignUp ? 'Create Account' : 'Sign In'}
                   </Button>
                 </form>
-              )}
 
               <div className="mt-6 text-center text-sm">
                 {isSignUp ? (

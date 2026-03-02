@@ -17,7 +17,8 @@ import {
   LogOut,
   User,
   Home,
-  FileText,
+  Users,
+  ClipboardList,
   Building2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -59,7 +60,8 @@ export function Header() {
       .slice(0, 2);
   };
 
-  const isActive = (path: string) => location.pathname === path;
+  const isActive = (paths: string[]) => paths.includes(location.pathname);
+  const isReportActive = location.pathname === '/report' || location.pathname === '/history' || location.pathname.startsWith('/report/');
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60">
@@ -81,43 +83,53 @@ export function Header() {
         <div className="flex items-center gap-1">
           {/* Navigation buttons */}
           <Button
-            variant={isActive('/') ? 'default' : 'ghost'}
+            variant={isActive(['/']) ? 'default' : 'ghost'}
             size="sm"
             onClick={() => navigate('/')}
-            className={cn('gap-2', isActive('/') && 'bg-primary')}
+            className={cn('gap-2', isActive(['/']) && 'bg-primary')}
           >
             <Home className="h-4 w-4" />
-            <span className="hidden sm:inline">Home</span>
+            <span className="hidden sm:inline">Dashboard</span>
           </Button>
           
           <Button
-            variant={isActive('/history') ? 'default' : 'ghost'}
+            variant={isActive(['/doctor', '/settings']) ? 'default' : 'ghost'}
             size="sm"
-            onClick={() => navigate('/history')}
-            className={cn('gap-2', isActive('/history') && 'bg-primary')}
-          >
-            <History className="h-4 w-4" />
-            <span className="hidden sm:inline">History</span>
-          </Button>
-          
-          <Button
-            variant={isActive('/settings') ? 'default' : 'ghost'}
-            size="sm"
-            onClick={() => navigate('/settings')}
-            className={cn('gap-2', isActive('/settings') && 'bg-primary')}
+            onClick={() => navigate('/doctor')}
+            className={cn('gap-2', isActive(['/doctor', '/settings']) && 'bg-primary')}
           >
             <Settings className="h-4 w-4" />
-            <span className="hidden sm:inline">Settings</span>
+            <span className="hidden sm:inline">Doctor</span>
+          </Button>
+          
+          <Button
+            variant={isActive(['/patient']) ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => navigate('/patient')}
+            className={cn('gap-2', isActive(['/patient']) && 'bg-primary')}
+          >
+            <ClipboardList className="h-4 w-4" />
+            <span className="hidden sm:inline">Patient</span>
           </Button>
 
           <Button
-            variant={isActive('/supabase-users') ? 'default' : 'ghost'}
+            variant={isReportActive ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => navigate('/report')}
+            className={cn('gap-2', isReportActive && 'bg-primary')}
+          >
+            <History className="h-4 w-4" />
+            <span className="hidden sm:inline">Report</span>
+          </Button>
+
+          <Button
+            variant={isActive(['/supabase-users']) ? 'default' : 'ghost'}
             size="sm"
             onClick={() => navigate('/supabase-users')}
-            className={cn('gap-2', isActive('/supabase-users') && 'bg-primary')}
+            className={cn('gap-2', isActive(['/supabase-users']) && 'bg-primary')}
           >
-            <FileText className="h-4 w-4" />
-            <span className="hidden sm:inline">Users</span>
+            <Users className="h-4 w-4" />
+            <span className="hidden sm:inline">User</span>
           </Button>
 
           <ThemeToggle />
@@ -159,7 +171,7 @@ export function Header() {
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => navigate('/settings')}>
                   <Settings className="mr-2 h-4 w-4" />
-                  Settings
+                  Doctor
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive">

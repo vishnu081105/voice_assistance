@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '@/integrations/supabase/client';
 import { Header } from '@/components/Header';
+import { listUsers } from '@/lib/db';
 
 export default function SupabaseUsers() {
   const [users, setUsers] = useState<any[]>([]);
@@ -12,20 +12,21 @@ export default function SupabaseUsers() {
 
   async function fetchUsers() {
     setLoading(true);
-    const { data, error } = await (supabase as any).from('users').select('*').limit(100);
-    setLoading(false);
-    if (error) {
+    try {
+      const data = await listUsers(100);
+      setUsers(data || []);
+    } catch (error) {
       console.error(error);
-      return;
+    } finally {
+      setLoading(false);
     }
-    setUsers(data || []);
   }
 
   return (
     <div className="min-h-screen bg-background">
       <Header />
       <main className="container max-w-2xl py-8">
-        <h2 className="text-2xl font-semibold mb-4">Users</h2>
+        <h2 className="text-2xl font-semibold mb-4">User</h2>
         {loading ? (
           <div>Loading...</div>
         ) : (
