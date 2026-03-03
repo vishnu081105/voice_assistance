@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { getAccessToken, getApiBaseUrl } from "@/lib/apiClient";
+import { getAccessToken } from "@/lib/apiClient";
 
 interface WhisperTranscriptionResult {
   text: string;
@@ -68,11 +68,13 @@ export function useWhisperTranscription(): UseWhisperTranscriptionReturn {
       formData.append("language", "en");
 
       setProgress("Uploading audio...");
+      console.log('[whisper] Uploading audio for transcription...');
 
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const controller = createTimeoutController(TRANSCRIPTION_TIMEOUT_MS);
       let response: Response;
       try {
-        response = await fetch(`${getApiBaseUrl()}/functions/v1/whisper-transcribe`, {
+        response = await fetch(`${supabaseUrl}/functions/v1/whisper-transcribe`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${authToken}`,

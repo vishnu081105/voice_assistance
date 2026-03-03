@@ -1,1 +1,10 @@
 project_id = "lvkihvxorqmybntacgkg"
+
+[functions.whisper-transcribe]
+verify_jwt = false
+
+[functions.process-transcription]
+verify_jwt = false
+
+[functions.generate-report]
+verify_jwt = false

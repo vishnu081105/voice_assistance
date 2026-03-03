@@ -325,8 +325,10 @@ export default function Dashboard() {
       const authToken = getAccessToken();
       if (!authToken) throw new Error('User not authenticated.');
 
-      const response = await fetch(
-        `${getApiBaseUrl()}/functions/v1/process-transcription`,
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      console.log('[enhance] Starting transcription enhancement...');
+      const response2 = await fetch(
+        `${supabaseUrl}/functions/v1/process-transcription`,
         {
           method: 'POST',
           headers: {
@@ -342,12 +344,12 @@ export default function Dashboard() {
           }),
         }
       );
-      if (!response.ok) {
-        if (response.status === 429) throw new Error('Rate limit exceeded.');
-        if (response.status === 402) throw new Error('AI usage limit reached.');
-        throw new Error(`Enhancement failed (${response.status})`);
+      if (!response2.ok) {
+        if (response2.status === 429) throw new Error('Rate limit exceeded.');
+        if (response2.status === 402) throw new Error('AI usage limit reached.');
+        throw new Error(`Enhancement failed (${response2.status})`);
       }
-      const data = await response.json();
+      const data = await response2.json();
       if (data.processed) {
         setEditedTranscript(data.processed);
         if (data.speakers?.length > 0) setDetectedSpeakers(data.speakers);
@@ -414,8 +416,10 @@ export default function Dashboard() {
       const authToken2 = getAccessToken();
       if (!authToken2) throw new Error('User not authenticated.');
 
+      const supabaseUrl2 = import.meta.env.VITE_SUPABASE_URL;
+      console.log('[report] Starting AI report generation...');
       const response = await fetch(
-        `${getApiBaseUrl()}/functions/v1/generate-report`,
+        `${supabaseUrl2}/functions/v1/generate-report`,
         {
           method: 'POST',
           headers: {
@@ -868,7 +872,7 @@ export default function Dashboard() {
 
                     {/* Results Tabs */}
                     <Tabs value={activeResultTab} onValueChange={setActiveResultTab}>
-                      <TabsList className="grid w-full grid-cols-4 md:grid-cols-5">
+                       <TabsList className="grid w-full grid-cols-4">
                         <TabsTrigger value="original" className="gap-1 text-xs">
                           <FileText className="h-3 w-3" />
                           <span className="hidden sm:inline">Original</span>
@@ -876,10 +880,6 @@ export default function Dashboard() {
                         <TabsTrigger value="enhanced" className="gap-1 text-xs">
                           <Wand2 className="h-3 w-3" />
                           <span className="hidden sm:inline">Enhanced</span>
-                        </TabsTrigger>
-                        <TabsTrigger value="summary" className="gap-1 text-xs">
-                          <ClipboardList className="h-3 w-3" />
-                          <span className="hidden sm:inline">Summary</span>
                         </TabsTrigger>
                         <TabsTrigger value="report" className="gap-1 text-xs">
                           <Sparkles className="h-3 w-3" />
@@ -953,33 +953,6 @@ export default function Dashboard() {
                         )}
                         <div className="bg-secondary/30 rounded-lg border p-4 min-h-[150px] max-h-[400px] overflow-y-auto font-mono text-sm whitespace-pre-wrap">
                           {editedTranscript || transcript || 'Click "Enhance with AI" to process the transcript.'}
-                        </div>
-                      </TabsContent>
-
-                      {/* Summary */}
-                      <TabsContent value="summary" className="border rounded-b-lg p-4">
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div className="space-y-2">
-                            <Label className="flex items-center gap-2">
-                              <Stethoscope className="h-4 w-4" />
-                              Medical Condition
-                            </Label>
-                            <Textarea rows={4} placeholder="Enter medical condition..." value={medicalCondition} onChange={(e) => setMedicalCondition(e.target.value)} />
-                          </div>
-                          <div className="space-y-2">
-                            <Label className="flex items-center gap-2">
-                              <ClipboardList className="h-4 w-4" />
-                              Treatment Plan
-                            </Label>
-                            <Textarea rows={4} placeholder="Enter treatment plan..." value={treatmentPlan} onChange={(e) => setTreatmentPlan(e.target.value)} />
-                          </div>
-                        </div>
-                        <div className="space-y-2 mt-4">
-                          <Label className="flex items-center gap-2">
-                            <Calendar className="h-4 w-4" />
-                            Follow-up Date
-                          </Label>
-                          <Input type="date" value={followupDate} onChange={(e) => setFollowupDate(e.target.value)} />
                         </div>
                       </TabsContent>
 
