@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { getAccessToken, getApiBaseUrl } from '@/lib/apiClient';
+import { getApiBaseUrl } from '@/lib/apiClient';
 
 interface UseAudioRecordingReturn {
   isRecording: boolean;
@@ -11,6 +11,15 @@ interface UseAudioRecordingReturn {
   uploadRecording: (reportId: string) => Promise<string | null>;
   error: string | null;
 }
+
+type UploadRecordingResponse = {
+  data?: {
+    publicUrl?: string | null;
+  };
+  error?: {
+    message?: string;
+  } | string;
+};
 
 export function useAudioRecording(): UseAudioRecordingReturn {
   const [isRecording, setIsRecording] = useState(false);
@@ -29,9 +38,11 @@ export function useAudioRecording(): UseAudioRecordingReturn {
       
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
+          autoGainControl: true,
+          channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
-          sampleRate: 44100,
+          sampleRate: 16000,
         } 
       });
       streamRef.current = stream;
@@ -62,7 +73,6 @@ export function useAudioRecording(): UseAudioRecordingReturn {
       };
       
       mediaRecorder.onerror = (event) => {
-        console.error('MediaRecorder error:', event);
         setError('Recording error occurred');
       };
       
@@ -70,7 +80,6 @@ export function useAudioRecording(): UseAudioRecordingReturn {
       mediaRecorder.start(1000); // Collect data every second
       setIsRecording(true);
     } catch (err) {
-      console.error('Failed to start recording:', err);
       setError('Failed to access microphone. Please grant permission.');
     }
   }, []);
@@ -125,41 +134,35 @@ export function useAudioRecording(): UseAudioRecordingReturn {
     }
 
     try {
-      const accessToken = getAccessToken();
-      if (!accessToken) {
-        setError('User not authenticated');
-        return null;
-      }
-
       const formData = new FormData();
       formData.append('file', audioBlob, `${reportId}-${Date.now()}.webm`);
       formData.append('reportId', reportId);
 
       const response = await fetch(`${getApiBaseUrl()}/api/storage/recordings`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
+        credentials: 'include',
         body: formData,
       });
 
       const bodyText = await response.text().catch(() => '');
-      let payload: any = {};
+      let payload: UploadRecordingResponse = {};
       try {
-        payload = bodyText ? JSON.parse(bodyText) : {};
+        payload = bodyText ? (JSON.parse(bodyText) as UploadRecordingResponse) : {};
       } catch {
         payload = {};
       }
 
       if (!response.ok) {
-        const message = payload?.error?.message || payload?.error || `Failed to upload recording (${response.status})`;
+        const message =
+          typeof payload.error === 'string'
+            ? payload.error
+            : payload?.error?.message || `Failed to upload recording (${response.status})`;
         setError(message);
         return null;
       }
 
       return payload?.data?.publicUrl || null;
     } catch (err) {
-      console.error('Upload failed:', err);
       setError('Failed to upload recording');
       return null;
     }

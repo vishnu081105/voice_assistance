@@ -1,13 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Header } from '@/components/Header';
 import { listUsers } from '@/lib/db';
 
-export default function SupabaseUsers() {
-  const [users, setUsers] = useState<any[]>([]);
+type AdminUser = {
+  id: string;
+  email: string;
+  full_name?: string | null;
+  role?: string | null;
+};
+
+export default function UsersPage() {
+  const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    fetchUsers();
+    void fetchUsers();
   }, []);
 
   async function fetchUsers() {
@@ -26,15 +33,17 @@ export default function SupabaseUsers() {
     <div className="min-h-screen bg-background">
       <Header />
       <main className="container max-w-2xl py-8">
-        <h2 className="text-2xl font-semibold mb-4">User</h2>
+        <h2 className="mb-4 text-2xl font-semibold">Users</h2>
         {loading ? (
           <div>Loading...</div>
         ) : (
           <ul className="space-y-2">
-            {users.map((u) => (
-              <li key={u.id} className="p-2 border rounded">
-                <div className="text-sm">{u.email}</div>
-                <div className="text-xs text-muted-foreground">{u.full_name}</div>
+            {users.map((user) => (
+              <li key={user.id} className="rounded border p-2">
+                <div className="text-sm">{user.email}</div>
+                <div className="text-xs text-muted-foreground">
+                  {user.full_name} {user.role ? `| ${user.role}` : ''}
+                </div>
               </li>
             ))}
           </ul>

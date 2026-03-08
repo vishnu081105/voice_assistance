@@ -98,7 +98,7 @@ export function exportReportToPDF(
     
     // Check if line is a section header (all caps or specific patterns)
     const isHeader = (line.trim() === line.trim().toUpperCase() && line.trim().length > 3 && !line.includes('-')) || 
-                     /^[A-Z][A-Za-z\s()\/]+:?$/.test(line.trim());
+                     /^[A-Z][A-Za-z\s()/]+:?$/.test(line.trim());
     
     if (isHeader && line.trim().length > 0) {
       doc.setFont('helvetica', 'bold');

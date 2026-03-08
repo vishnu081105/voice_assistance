@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Search, FileText, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { format } from 'date-fns';
+import { downloadReportAsPDF } from '@/utils/reportExport';
 
 export default function History() {
   const [reports, setReports] = useState<Report[]>([]);
@@ -64,34 +64,11 @@ export default function History() {
   };
 
   const handleDownload = (report: Report) => {
-    const content = `
-MediVoice Report
-================
-Date: ${format(new Date(report.createdAt), 'MMMM d, yyyy h:mm a')}
-Type: ${report.reportType.toUpperCase()}
-Duration: ${Math.floor(report.duration / 60)}:${(report.duration % 60).toString().padStart(2, '0')}
-Word Count: ${report.wordCount}
-
---- Original Transcription ---
-${report.transcription}
-
---- Generated Report ---
-${report.reportContent}
-    `.trim();
-
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `medivoice-report-${format(new Date(report.createdAt), 'yyyy-MM-dd-HHmm')}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadReportAsPDF(report);
 
     toast({
       title: 'Download started',
-      description: 'Your report is being downloaded.',
+      description: 'The PDF report is being downloaded.',
     });
   };
 

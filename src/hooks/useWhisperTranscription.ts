@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { getAccessToken } from "@/lib/apiClient";
+import { getApiBaseUrl } from "@/lib/apiClient";
 
 interface WhisperTranscriptionResult {
   text: string;
@@ -21,6 +21,7 @@ interface UseWhisperTranscriptionReturn {
 
 const MAX_AUDIO_FILE_SIZE = 100 * 1024 * 1024;
 const TRANSCRIPTION_TIMEOUT_MS = 5 * 60 * 1000;
+const LOCAL_TRANSCRIBE_URL = `${getApiBaseUrl()}/api/transcribe`;
 
 function createTimeoutController(ms: number) {
   const controller = new AbortController();
@@ -29,6 +30,195 @@ function createTimeoutController(ms: number) {
     signal: controller.signal,
     clear: () => clearTimeout(timeout),
   };
+}
+
+function parseResponseBody(raw: string) {
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { error: raw };
+  }
+}
+
+function writeAscii(view: DataView, offset: number, value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
+}
+
+function encodePcm16Wav(samples: Float32Array, sampleRate: number): ArrayBuffer {
+  const bytesPerSample = 2;
+  const dataByteLength = samples.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataByteLength);
+  const view = new DataView(buffer);
+
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataByteLength, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, dataByteLength, true);
+
+  let offset = 44;
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[index]));
+    const pcm = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+    view.setInt16(offset, Math.round(pcm), true);
+    offset += bytesPerSample;
+  }
+
+  return buffer;
+}
+
+function downmixToMono(audioBuffer: AudioBuffer): Float32Array {
+  const mono = new Float32Array(audioBuffer.length);
+  const channelCount = audioBuffer.numberOfChannels;
+  if (channelCount <= 0) return mono;
+
+  for (let channel = 0; channel < channelCount; channel += 1) {
+    const channelData = audioBuffer.getChannelData(channel);
+    for (let sampleIndex = 0; sampleIndex < channelData.length; sampleIndex += 1) {
+      mono[sampleIndex] += channelData[sampleIndex] / channelCount;
+    }
+  }
+
+  return mono;
+}
+
+async function convertAudioToLinear16Wav(audioBlob: Blob): Promise<Blob> {
+  const AudioContextClass =
+    window.AudioContext ||
+    (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextClass) {
+    return audioBlob;
+  }
+
+  const audioContext = new AudioContextClass();
+  try {
+    const sourceBuffer = await audioBlob.arrayBuffer();
+    const decoded = await audioContext.decodeAudioData(sourceBuffer.slice(0));
+    const monoSamples = downmixToMono(decoded);
+    const monoBuffer = audioContext.createBuffer(1, monoSamples.length, decoded.sampleRate);
+    monoBuffer.copyToChannel(monoSamples, 0);
+
+    const targetSampleRate = 16000;
+    const renderedLength = Math.max(1, Math.ceil(decoded.duration * targetSampleRate));
+    const offlineContext = new OfflineAudioContext(1, renderedLength, targetSampleRate);
+    const source = offlineContext.createBufferSource();
+    source.buffer = monoBuffer;
+    source.connect(offlineContext.destination);
+    source.start(0);
+    const rendered = await offlineContext.startRendering();
+    const renderedSamples = rendered.getChannelData(0);
+    const wavBuffer = encodePcm16Wav(renderedSamples, rendered.sampleRate);
+    return new Blob([wavBuffer], { type: "audio/wav" });
+  } finally {
+    await audioContext.close().catch(() => undefined);
+  }
+}
+
+async function buildFormData(audioBlob: Blob) {
+  let wavBlob = audioBlob;
+  try {
+    wavBlob = await convertAudioToLinear16Wav(audioBlob);
+  } catch {
+    // Fall back to the original recording when browser-side normalization is unavailable.
+  }
+  const formData = new FormData();
+  formData.append("audio", wavBlob, "recording.wav");
+  formData.append("language", "en");
+  return formData;
+}
+
+function mapTranscriptionResponse(data: unknown): WhisperTranscriptionResult {
+  const payload = data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+  const text = typeof payload.text === "string" ? payload.text : "";
+  if (!text || text.trim().length === 0) {
+    throw new Error("Transcription failed. Please try again.");
+  }
+
+  const durationValue = Number(payload.duration || 0);
+  const duration = Number.isFinite(durationValue) ? durationValue : 0;
+  const language = typeof payload.language === "string" ? payload.language : "en";
+
+  const segments = Array.isArray(payload.segments)
+    ? payload.segments
+        .map((segment) => {
+          const row = segment && typeof segment === "object" ? (segment as Record<string, unknown>) : {};
+          return {
+            start: Number.isFinite(Number(row.start)) ? Number(row.start) : 0,
+            end: Number.isFinite(Number(row.end)) ? Number(row.end) : 0,
+            text: typeof row.text === "string" ? row.text : "",
+          };
+        })
+        .filter((segment) => segment.text.trim().length > 0)
+    : [];
+
+  return {
+    text,
+    duration,
+    language,
+    segments,
+  };
+}
+
+function getReadableErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  const normalized = message.trim();
+  if (!normalized) {
+    return "Transcription failed. Please try again.";
+  }
+
+  const lower = normalized.toLowerCase();
+  if (lower.includes("unsupported")) {
+    return "Unsupported audio format. Please use WAV, MP3, M4A, or WEBM audio.";
+  }
+  if (lower.includes("too large") || lower.includes("size limit")) {
+    return "Audio file exceeds the configured upload limit.";
+  }
+  if (lower.includes("timed out")) {
+    return "Transcription timed out. Please try again.";
+  }
+  if (lower.includes("low confidence")) {
+    return "Transcription quality is low. Please review the audio and retry if needed.";
+  }
+  return normalized;
+}
+
+async function requestTranscription({
+  formData,
+}: {
+  formData: FormData;
+}) {
+  const controller = createTimeoutController(TRANSCRIPTION_TIMEOUT_MS);
+  try {
+    const response = await fetch(LOCAL_TRANSCRIBE_URL, {
+      method: "POST",
+      credentials: "include",
+      body: formData,
+      signal: controller.signal,
+    });
+
+    const raw = await response.text().catch(() => "");
+    const payload = parseResponseBody(raw);
+
+    if (!response.ok) {
+      const detail = payload?.error?.message || payload?.error || payload?.detail || payload?.message;
+      throw new Error(String(detail || response.statusText || "Transcription failed."));
+    }
+
+    return mapTranscriptionResponse(payload);
+  } finally {
+    controller.clear();
+  }
 }
 
 export function useWhisperTranscription(): UseWhisperTranscriptionReturn {
@@ -48,91 +238,16 @@ export function useWhisperTranscription(): UseWhisperTranscriptionReturn {
 
     setIsTranscribing(true);
     setError(null);
-    setProgress("Preparing audio...");
+    setProgress("Processing...");
 
     try {
-      const authToken = getAccessToken();
-      if (!authToken) {
-        throw new Error("User not authenticated");
-      }
-
-      const mimeType = audioBlob.type || "";
-      let extension = "webm";
-      if (mimeType.includes("mp4")) extension = "mp4";
-      else if (mimeType.includes("mp3")) extension = "mp3";
-      else if (mimeType.includes("wav")) extension = "wav";
-      else if (mimeType.includes("ogg")) extension = "ogg";
-
-      const formData = new FormData();
-      formData.append("audio", audioBlob, `recording.${extension}`);
-      formData.append("language", "en");
-
-      setProgress("Uploading audio...");
-      console.log('[whisper] Uploading audio for transcription...');
-
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const controller = createTimeoutController(TRANSCRIPTION_TIMEOUT_MS);
-      let response: Response;
-      try {
-        response = await fetch(`${supabaseUrl}/functions/v1/whisper-transcribe`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${authToken}`,
-          },
-          body: formData,
-          signal: controller.signal,
-        });
-      } finally {
-        controller.clear();
-      }
-
-      const raw = await response.text().catch(() => "");
-      let dataJson: any = null;
-      try {
-        dataJson = raw ? JSON.parse(raw) : null;
-      } catch {
-        throw new Error(`Transcription function returned invalid response: ${raw || "empty response"}`);
-      }
-
-      if (!response.ok) {
-        if (response.status === 429) throw new Error("Rate limit exceeded. Please wait and try again.");
-        if (response.status === 401) throw new Error("Authentication failed (401).");
-        if (response.status === 402) throw new Error("Usage limit reached (402).");
-        if (response.status === 413) throw new Error("Audio file too large.");
-        throw new Error(
-          `Transcription failed (${response.status}) ${
-            dataJson?.error || response.statusText || "Unknown error"
-          }`
-        );
-      }
-
-      const transcriptionText = typeof dataJson?.text === "string" ? dataJson.text.trim() : "";
-      if (!transcriptionText) {
-        throw new Error("No transcription received from Whisper");
-      }
-
-      setProgress("Finalizing transcription...");
-
-      const durationValue = Number(dataJson?.duration || 0);
-      const duration = Number.isFinite(durationValue) ? durationValue : 0;
-      const segments = Array.isArray(dataJson?.segments) ? dataJson.segments : [];
-
+      const result = await requestTranscription({ formData: await buildFormData(audioBlob) });
       setProgress("Complete");
-
-      return {
-        text: transcriptionText,
-        duration,
-        language: typeof dataJson?.language === "string" ? dataJson.language : "en",
-        segments,
-      };
+      return result;
     } catch (err) {
-      console.error("Whisper transcription error:", err);
-      if (err instanceof DOMException && err.name === "AbortError") {
-        setError("Transcription request timed out. Please try again.");
-      } else {
-        setError(err instanceof Error ? err.message : "Failed to transcribe audio");
-      }
-      return null;
+      const message = getReadableErrorMessage(err);
+      setError(message);
+      throw new Error(message);
     } finally {
       setIsTranscribing(false);
       setTimeout(() => setProgress(""), 1500);

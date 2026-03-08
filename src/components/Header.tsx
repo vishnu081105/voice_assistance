@@ -122,15 +122,17 @@ export function Header() {
             <span className="hidden sm:inline">Report</span>
           </Button>
 
-          <Button
-            variant={isActive(['/supabase-users']) ? 'default' : 'ghost'}
-            size="sm"
-            onClick={() => navigate('/supabase-users')}
-            className={cn('gap-2', isActive(['/supabase-users']) && 'bg-primary')}
-          >
-            <Users className="h-4 w-4" />
-            <span className="hidden sm:inline">User</span>
-          </Button>
+          {user?.role === 'admin' && (
+            <Button
+              variant={isActive(['/users']) ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => navigate('/users')}
+              className={cn('gap-2', isActive(['/users']) && 'bg-primary')}
+            >
+              <Users className="h-4 w-4" />
+              <span className="hidden sm:inline">Users</span>
+            </Button>
+          )}
 
           <ThemeToggle />
 

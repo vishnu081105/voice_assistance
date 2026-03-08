@@ -11,6 +11,7 @@ model User {
   id                String    @id @default(uuid())
   email             String    @unique
   full_name         String?
+  role              String    @default("doctor")
   password_hash     String
   reset_token       String?
   reset_token_until DateTime?
@@ -20,6 +21,8 @@ model User {
   patients          Patient[]
   templates         Template[]
   settings          Setting[]
+  audit_logs        AuditLog[]
+  medical_audio_sessions MedicalAudioSession[]
 }
 
 model Report {
@@ -34,6 +37,8 @@ model Report {
   doctor_id      String?
   doctor_name    String?
   audio_url      String?
+  audio_storage_path String?
+  audio_mime_type String?
   generated_report String?
   created_at     DateTime @default(now())
   updated_at     DateTime @updatedAt
@@ -84,4 +89,48 @@ model Setting {
 
   @@unique([user_id, key])
   @@index([user_id])
+}
+
+model MedicalAudioSession {
+  id                String   @id
+  user_id           String
+  filename          String
+  upload_time       DateTime
+  processing_status String
+  audio_path        String
+  audio_file_path   String?
+  audio_mime_type   String?
+  transcription_text String?
+  raw_transcription_text String?
+  corrected_transcription_text String?
+  transcript_confidence Float?
+  transcript_review_required Boolean @default(false)
+  transcript_validation_status String?
+  transcript_validation_issues String?
+  structured_medical_data String?
+  transcript_path   String?
+  report_path       String?
+  report_html_path  String?
+  error_message     String?
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+  user              User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([processing_status])
+}
+
+model AuditLog {
+  id            String   @id @default(uuid())
+  user_id       String?
+  action        String
+  resource_type String
+  resource_id   String?
+  ip_address    String?
+  timestamp     DateTime @default(now())
+  user          User?    @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id])
+  @@index([resource_type, resource_id])
+  @@index([timestamp])
 }

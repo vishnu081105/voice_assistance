@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { Header } from '@/components/Header';
 import { AudioWaveform } from '@/components/AudioWaveform';
+import MedicalAudioUploadButton from '@/components/MedicalAudioUploadButton';
 import { ReportTypeSelector } from '@/components/ReportTypeSelector';
 import { TranscriptionEditor } from '@/components/TranscriptionEditor';
-import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
 import { useAudioRecording } from '@/hooks/useAudioRecording';
 import { useWhisperTranscription } from '@/hooks/useWhisperTranscription';
 import { Button } from '@/components/ui/button';
@@ -17,12 +17,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { 
-  Mic, Square, Sparkles, Loader2, Save, RotateCcw, AlertCircle, Edit, Wand2, 
+  Mic, Square, Sparkles, Loader2, Save, RotateCcw, Edit, Wand2, 
   Users, Play, Pause, Volume2, Zap, FileText, Search, Database, 
   Stethoscope, ClipboardList, Calendar, XCircle, Activity, User, Clock
 } from 'lucide-react';
 import {
   GeneratedReport,
+  Patient,
   ReportType,
   getPatientById,
   getReportStats,
@@ -36,7 +37,35 @@ import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
-import { getAccessToken, getApiBaseUrl } from '@/lib/apiClient';
+import { apiRequest } from '@/lib/apiClient';
+import { ReportApiRow } from '@/lib/repositories/report.repository';
+import { buildStructuredReportText } from '@/utils/reportFormatting';
+import {
+  getMedicalTranscript,
+  MedicalTranscriptEntry,
+  subscribeMedicalTranscription,
+} from '@/lib/repositories/medical.repository';
+
+type ProcessTranscriptResponse = {
+  processed?: string;
+  speakers?: string[];
+};
+
+type GenerateReportResponse = {
+  patient_information?: Record<string, unknown>;
+  chief_complaint?: string;
+  history_of_present_illness?: string;
+  summary?: string;
+  symptoms?: unknown[];
+  medical_assessment?: string;
+  diagnosis?: string;
+  treatment_plan?: string;
+  medications?: unknown[];
+  follow_up_instructions?: unknown[];
+  recommendations?: unknown[];
+  report_content?: string;
+  report_id?: string | null;
+};
 
 export default function Dashboard() {
   const [reportType, setReportType] = useState<ReportType>('general');
@@ -64,6 +93,7 @@ export default function Dashboard() {
   const [whisperTranscript, setWhisperTranscript] = useState('');
   const [sourceLanguage, setSourceLanguage] = useState('auto');
   const [showResults, setShowResults] = useState(false);
+  const [isUploadTranscribing, setIsUploadTranscribing] = useState(false);
   const [medicalCondition, setMedicalCondition] = useState('');
   const [treatmentPlan, setTreatmentPlan] = useState('');
   const [followupDate, setFollowupDate] = useState('');
@@ -71,7 +101,7 @@ export default function Dashboard() {
   const [generatedStructuredReport, setGeneratedStructuredReport] = useState<GeneratedReport | null>(null);
   const [generatedReportId, setGeneratedReportId] = useState<string | null>(null);
   const [searchPatientId, setSearchPatientId] = useState('');
-  const [patientRecords, setPatientRecords] = useState<any[]>([]);
+  const [patientRecords, setPatientRecords] = useState<ReportApiRow[]>([]);
   const [selectedRecordIndex, setSelectedRecordIndex] = useState<number | null>(null);
   const [totalPatients, setTotalPatients] = useState(0);
   const [totalRecords, setTotalRecords] = useState(0);
@@ -79,23 +109,15 @@ export default function Dashboard() {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const patientLookupTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const uploadTranscriptionStopRef = useRef<(() => void) | null>(null);
+  const uploadTranscriptEntriesRef = useRef<MedicalTranscriptEntry[]>([]);
   
   const { toast } = useToast();
   const navigate = useNavigate();
   const { user } = useAuth();
   
   const {
-    isListening,
-    transcript: liveTranscript,
-    interimTranscript,
-    startListening,
-    stopListening,
-    resetTranscript,
-    isSupported,
-    error: speechError,
-  } = useSpeechRecognition();
-
-  const {
+    isRecording,
     audioBlob,
     audioUrl,
     startRecording,
@@ -112,7 +134,7 @@ export default function Dashboard() {
     progress: whisperProgress,
   } = useWhisperTranscription();
 
-  const transcript = whisperTranscript || liveTranscript;
+  const transcript = whisperTranscript;
 
   // Load doctor name and fetch stats
   useEffect(() => {
@@ -125,13 +147,13 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (!isEditingTranscription && !editedTranscript) {
+    if (!isEditingTranscription && !editedTranscript && !isUploadTranscribing) {
       setEditedTranscript(transcript);
     }
-  }, [transcript, isEditingTranscription, editedTranscript]);
+  }, [transcript, isEditingTranscription, editedTranscript, isUploadTranscribing]);
 
   useEffect(() => {
-    if (isListening) {
+    if (isRecording) {
       timerRef.current = setInterval(() => {
         setRecordingDuration((prev) => prev + 1);
       }, 1000);
@@ -141,9 +163,9 @@ export default function Dashboard() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [isListening]);
+  }, [isRecording]);
 
-  const applyPatientDetails = (patient: any) => {
+  const applyPatientDetails = (patient: Patient) => {
     setPatientName(patient?.fullName || '');
     setPatientAge(patient?.age !== undefined && patient?.age !== null ? String(patient.age) : '');
     setPatientGender(patient?.gender || '');
@@ -212,6 +234,15 @@ export default function Dashboard() {
     };
   }, [patientId]);
 
+  useEffect(() => {
+    return () => {
+      if (uploadTranscriptionStopRef.current) {
+        uploadTranscriptionStopRef.current();
+        uploadTranscriptionStopRef.current = null;
+      }
+    };
+  }, []);
+
   const fetchDatabaseStats = async () => {
     if (!user) return;
     try {
@@ -219,12 +250,160 @@ export default function Dashboard() {
       setTotalPatients(stats.totalPatients);
       setTotalRecords(stats.totalRecords);
       setAllPatientIds(stats.allPatientIds);
-    } catch (err) {
-      console.error('Failed to fetch stats:', err);
+    } catch {
+      // Keep the dashboard responsive if stats loading fails.
+    }
+  };
+
+  const stopUploadAudioTranscription = () => {
+    if (uploadTranscriptionStopRef.current) {
+      uploadTranscriptionStopRef.current();
+      uploadTranscriptionStopRef.current = null;
+    }
+    uploadTranscriptEntriesRef.current = [];
+    setIsUploadTranscribing(false);
+  };
+
+  const formatUploadedTranscriptText = (entries: MedicalTranscriptEntry[]) => {
+    return entries
+      .map((entry) => {
+        const text = String(entry?.text || '').trim();
+        if (!text) return '';
+        const speaker = String(entry?.speaker || 'Unknown').toUpperCase();
+        return `${speaker}: ${text}`;
+      })
+      .filter(Boolean)
+      .join('\n');
+  };
+
+  const handleUploadedAudioTranscription = async ({
+    file: _file,
+    payload,
+  }: {
+    file: File;
+    payload?: Record<string, unknown>;
+  }) => {
+    const uploadId = String(payload?.upload_id || '').trim();
+    if (!uploadId) {
+      throw new Error('Audio processing failed. Please upload a valid audio file.');
+    }
+
+    if (isRecording) {
+      throw new Error('Stop microphone recording before transcribing uploaded audio.');
+    }
+
+    stopUploadAudioTranscription();
+    uploadTranscriptEntriesRef.current = [];
+
+    setShowResults(true);
+    setActiveResultTab('original');
+    setIsEditingTranscription(false);
+    setEditedTranscript('');
+    setWhisperTranscript('');
+    setIsUploadTranscribing(true);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let finished = false;
+        const finishSuccess = (finalText: string) => {
+          if (finished) return;
+          finished = true;
+          if (uploadTranscriptionStopRef.current) {
+            uploadTranscriptionStopRef.current();
+            uploadTranscriptionStopRef.current = null;
+          }
+          if (finalText) {
+            setWhisperTranscript(finalText);
+            setEditedTranscript(finalText);
+          }
+          resolve();
+        };
+        const finishError = (error: unknown) => {
+          if (finished) return;
+          finished = true;
+          if (uploadTranscriptionStopRef.current) {
+            uploadTranscriptionStopRef.current();
+            uploadTranscriptionStopRef.current = null;
+          }
+          reject(
+            error instanceof Error
+              ? error
+              : new Error('Audio processing failed. Please upload a valid audio file.')
+          );
+        };
+
+        const timeout = setTimeout(() => {
+          finishError(new Error('Upload transcription timed out.'));
+        }, 10 * 60 * 1000);
+
+        const stopStream = subscribeMedicalTranscription(uploadId, {
+          onUpdate: (event) => {
+            if (Array.isArray(event.transcript) && event.transcript.length > 0) {
+              uploadTranscriptEntriesRef.current = event.transcript;
+            } else if (event.chunk && typeof event.chunk === 'object') {
+              uploadTranscriptEntriesRef.current = [...uploadTranscriptEntriesRef.current, event.chunk];
+            }
+
+            const nextText = formatUploadedTranscriptText(uploadTranscriptEntriesRef.current);
+            if (nextText) {
+              setWhisperTranscript(nextText);
+            }
+          },
+          onCompleted: async (event) => {
+            clearTimeout(timeout);
+            if (event.status === 'failed' || event.error?.message) {
+              finishError(event.error || new Error('Upload transcription failed.'));
+              return;
+            }
+
+            if (uploadTranscriptEntriesRef.current.length === 0) {
+              try {
+                const snapshot = await getMedicalTranscript(uploadId);
+                if (Array.isArray(snapshot?.transcript)) {
+                  uploadTranscriptEntriesRef.current = snapshot.transcript;
+                }
+              } catch {
+                // Fall back to the streamed transcript collected so far.
+              }
+            }
+
+            const nextText = formatUploadedTranscriptText(uploadTranscriptEntriesRef.current);
+            finishSuccess(nextText);
+          },
+          onError: (error) => {
+            clearTimeout(timeout);
+            finishError(error);
+          },
+        });
+
+        uploadTranscriptionStopRef.current = () => {
+          clearTimeout(timeout);
+          stopStream();
+        };
+      });
+
+      toast({
+        title: 'Uploaded audio transcribed',
+        description: 'Transcript is available in Original Language Transcript.',
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Audio processing failed. Please upload a valid audio file.';
+      toast({
+        variant: 'destructive',
+        title: 'Uploaded audio transcription failed',
+        description: message,
+      });
+      throw error instanceof Error ? error : new Error(message);
+    } finally {
+      setIsUploadTranscribing(false);
     }
   };
 
   const handleStartRecording = async () => {
+    stopUploadAudioTranscription();
     setRecordingDuration(0);
     setGeneratedReport('');
     setGeneratedStructuredReport(null);
@@ -239,33 +418,36 @@ export default function Dashboard() {
     setFollowupDate('');
     
     await startRecording();
-    startListening();
   };
 
   const handleStopRecording = async () => {
-    stopListening();
     const recordedBlob = await stopRecording();
     
     if (recordedBlob && recordedBlob.size > 0) {
-      toast({
-        title: 'Processing with Whisper AI',
-        description: 'Transcribing your recording with OpenAI Whisper...',
-      });
-      
-      const result = await whisperTranscribe(recordedBlob);
       setShowResults(true);
-      if (result && result.text) {
+      toast({
+        title: 'Processing',
+        description: 'Processing...',
+      });
+
+      try {
+        const result = await whisperTranscribe(recordedBlob);
+        if (!result?.text) {
+          throw new Error('Transcription failed. Please try again.');
+        }
+
         setWhisperTranscript(result.text);
         setEditedTranscript(result.text);
         toast({
-          title: 'Whisper Transcription Complete',
-          description: `Transcribed ${Math.round(result.duration)}s of audio with high accuracy.`,
+          title: 'Transcription Complete',
+          description: `Transcribed ${Math.round(result.duration)}s of audio.`,
         });
-      } else {
+      } catch (error) {
         toast({
           variant: 'destructive',
-          title: 'Whisper Transcription Failed',
-          description: whisperError || 'Transcription failed. You can still edit or retry.',
+          title: 'Transcription Failed',
+          description:
+            error instanceof Error ? error.message : whisperError || 'Transcription failed. Please try again.',
         });
       }
     } else {
@@ -274,7 +456,7 @@ export default function Dashboard() {
   };
 
   const handleCancelRecording = () => {
-    resetTranscript();
+    stopUploadAudioTranscription();
     resetRecording();
     setShowResults(false);
     setGeneratedReport('');
@@ -322,34 +504,16 @@ export default function Dashboard() {
     }
     setIsEnhancing(true);
     try {
-      const authToken = getAccessToken();
-      if (!authToken) throw new Error('User not authenticated.');
-
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      console.log('[enhance] Starting transcription enhancement...');
-      const response2 = await fetch(
-        `${supabaseUrl}/functions/v1/process-transcription`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken}`,
-          },
-          body: JSON.stringify({
-            transcription: textToEnhance,
-            enableDiarization,
-            enhanceTerminology: true,
-            patient_id: patientId || undefined,
-            patient_name: patientName || undefined,
-          }),
-        }
-      );
-      if (!response2.ok) {
-        if (response2.status === 429) throw new Error('Rate limit exceeded.');
-        if (response2.status === 402) throw new Error('AI usage limit reached.');
-        throw new Error(`Enhancement failed (${response2.status})`);
-      }
-      const data = await response2.json();
+      const data = await apiRequest<ProcessTranscriptResponse>('/api/process-transcript', {
+        method: 'POST',
+        body: {
+          transcription: textToEnhance,
+          enableDiarization,
+          enhanceTerminology: true,
+          patient_id: patientId || undefined,
+          patient_name: patientName || undefined,
+        },
+      });
       if (data.processed) {
         setEditedTranscript(data.processed);
         if (data.speakers?.length > 0) setDetectedSpeakers(data.speakers);
@@ -379,7 +543,7 @@ export default function Dashboard() {
 
   const currentTranscript = editedTranscript || transcript;
   const hasTranscription = currentTranscript.trim().length > 0;
-  const wordCount = (currentTranscript + ' ' + interimTranscript).trim().split(/\s+/).filter(Boolean).length;
+  const wordCount = currentTranscript.trim().split(/\s+/).filter(Boolean).length;
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -388,13 +552,7 @@ export default function Dashboard() {
   };
 
   const formatStructuredReportText = (report: GeneratedReport) => {
-    return [
-      `Summary:\n${report.summary || 'N/A'}`,
-      `Symptoms:\n${report.symptoms.length > 0 ? report.symptoms.map((item) => `- ${item}`).join('\n') : '- N/A'}`,
-      `Diagnosis:\n${report.diagnosis || 'N/A'}`,
-      `Treatment Plan:\n${report.treatment_plan || 'N/A'}`,
-      `Recommendations:\n${report.recommendations.length > 0 ? report.recommendations.map((item) => `- ${item}`).join('\n') : '- N/A'}`,
-    ].join('\n\n');
+    return buildStructuredReportText(report);
   };
 
   const generateReport = async () => {
@@ -413,76 +571,134 @@ export default function Dashboard() {
         await upsertCurrentPatient();
       }
 
-      const authToken2 = getAccessToken();
-      if (!authToken2) throw new Error('User not authenticated.');
-
-      const supabaseUrl2 = import.meta.env.VITE_SUPABASE_URL;
-      console.log('[report] Starting AI report generation...');
-      const response = await fetch(
-        `${supabaseUrl2}/functions/v1/generate-report`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${authToken2}`,
-          },
-          body: JSON.stringify({
-            transcription: textToProcess,
-            reportType,
+      const responseData = await apiRequest<GenerateReportResponse>('/api/generate-report', {
+        method: 'POST',
+        body: {
+          transcription: textToProcess,
+          reportType,
+          patient_id: patientId || undefined,
+          doctor_id: doctorId || undefined,
+          doctor_name: doctorName || undefined,
+          patient_details: {
             patient_id: patientId || undefined,
+            full_name: patientName || undefined,
+            age: patientAge ? Number(patientAge) : undefined,
+            gender: patientGender || undefined,
+            phone: patientPhone || undefined,
+            address: patientAddress || undefined,
+            medical_history: patientMedicalHistory || undefined,
+            allergies: patientAllergies || undefined,
+            diagnosis_history: patientDiagnosisHistory || undefined,
+          },
+          doctor_details: {
             doctor_id: doctorId || undefined,
             doctor_name: doctorName || undefined,
-            patient_details: {
-              patient_id: patientId || undefined,
-              full_name: patientName || undefined,
-              age: patientAge ? Number(patientAge) : undefined,
-              gender: patientGender || undefined,
-              phone: patientPhone || undefined,
-              address: patientAddress || undefined,
-              medical_history: patientMedicalHistory || undefined,
-              allergies: patientAllergies || undefined,
-              diagnosis_history: patientDiagnosisHistory || undefined,
-            },
-            doctor_details: {
-              doctor_id: doctorId || undefined,
-              doctor_name: doctorName || undefined,
-            },
-            persist: true,
-          }),
-        }
-      );
-
-      const rawBody = await response.text().catch(() => '');
-      let responseData: any = {};
-      try {
-        responseData = rawBody ? JSON.parse(rawBody) : {};
-      } catch {
-        throw new Error(`Invalid AI response: ${rawBody || 'empty response'}`);
-      }
-
-      if (!response.ok) {
-        if (response.status === 429) throw new Error('Rate limit exceeded.');
-        if (response.status === 402) throw new Error('AI usage limit reached.');
-        const serverMessage = responseData?.error?.message || responseData?.error || `Failed to generate report (${response.status})`;
-        throw new Error(serverMessage);
-      }
+          },
+          persist: true,
+        },
+      });
 
       const structured: GeneratedReport = {
+        patient_information:
+          responseData.patient_information && typeof responseData.patient_information === 'object'
+            ? {
+                patient_id:
+                  typeof responseData.patient_information.patient_id === 'string'
+                    ? responseData.patient_information.patient_id
+                    : undefined,
+                full_name:
+                  typeof responseData.patient_information.full_name === 'string'
+                    ? responseData.patient_information.full_name
+                    : undefined,
+                age:
+                  typeof responseData.patient_information.age === 'number'
+                    ? responseData.patient_information.age
+                    : null,
+                gender:
+                  typeof responseData.patient_information.gender === 'string'
+                    ? responseData.patient_information.gender
+                    : undefined,
+                phone:
+                  typeof responseData.patient_information.phone === 'string'
+                    ? responseData.patient_information.phone
+                    : undefined,
+                address:
+                  typeof responseData.patient_information.address === 'string'
+                    ? responseData.patient_information.address
+                    : undefined,
+                medical_history:
+                  typeof responseData.patient_information.medical_history === 'string'
+                    ? responseData.patient_information.medical_history
+                    : undefined,
+                allergies:
+                  typeof responseData.patient_information.allergies === 'string'
+                    ? responseData.patient_information.allergies
+                    : undefined,
+                diagnosis_history:
+                  typeof responseData.patient_information.diagnosis_history === 'string'
+                    ? responseData.patient_information.diagnosis_history
+                    : undefined,
+                doctor_id:
+                  typeof responseData.patient_information.doctor_id === 'string'
+                    ? responseData.patient_information.doctor_id
+                    : undefined,
+                doctor_name:
+                  typeof responseData.patient_information.doctor_name === 'string'
+                    ? responseData.patient_information.doctor_name
+                    : undefined,
+                report_type:
+                  typeof responseData.patient_information.report_type === 'string'
+                    ? responseData.patient_information.report_type
+                    : undefined,
+              }
+            : {},
+        chief_complaint:
+          typeof responseData.chief_complaint === 'string' ? responseData.chief_complaint : '',
+        history_of_present_illness:
+          typeof responseData.history_of_present_illness === 'string'
+            ? responseData.history_of_present_illness
+            : '',
         summary: typeof responseData.summary === 'string' ? responseData.summary : '',
-        symptoms: Array.isArray(responseData.symptoms) ? responseData.symptoms.filter((item: any) => typeof item === 'string') : [],
+        symptoms: Array.isArray(responseData.symptoms)
+          ? responseData.symptoms.filter((item): item is string => typeof item === 'string')
+          : [],
+        medical_assessment:
+          typeof responseData.medical_assessment === 'string' ? responseData.medical_assessment : '',
         diagnosis: typeof responseData.diagnosis === 'string' ? responseData.diagnosis : '',
         treatment_plan: typeof responseData.treatment_plan === 'string' ? responseData.treatment_plan : '',
-        recommendations: Array.isArray(responseData.recommendations)
-          ? responseData.recommendations.filter((item: any) => typeof item === 'string')
+        medications: Array.isArray(responseData.medications)
+          ? responseData.medications
+              .map((item) => {
+                const row = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+                return {
+                  name: typeof row.name === 'string' ? row.name : '',
+                  dosage: typeof row.dosage === 'string' ? row.dosage : '',
+                  frequency: typeof row.frequency === 'string' ? row.frequency : '',
+                };
+              })
+              .filter((item) => item.name)
           : [],
+        follow_up_instructions: Array.isArray(responseData.follow_up_instructions)
+          ? responseData.follow_up_instructions.filter((item): item is string => typeof item === 'string')
+          : [],
+        recommendations: Array.isArray(responseData.recommendations)
+          ? responseData.recommendations.filter((item): item is string => typeof item === 'string')
+          : [],
+        report_content:
+          typeof responseData.report_content === 'string' ? responseData.report_content : undefined,
       };
 
       const hasGeneratedContent =
         Boolean(structured.summary) ||
+        Boolean(structured.chief_complaint) ||
+        Boolean(structured.history_of_present_illness) ||
+        Boolean(structured.medical_assessment) ||
         Boolean(structured.diagnosis) ||
         Boolean(structured.treatment_plan) ||
         structured.symptoms.length > 0 ||
-        structured.recommendations.length > 0;
+        structured.recommendations.length > 0 ||
+        structured.follow_up_instructions.length > 0 ||
+        structured.medications.length > 0;
 
       if (!hasGeneratedContent) {
         throw new Error('Generated report is empty.');
@@ -565,24 +781,7 @@ export default function Dashboard() {
     }
   };
 
-  const error = speechError || recordingError;
-
-  if (!isSupported) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Header />
-        <main className="container max-w-6xl py-8">
-          <Card className="border-destructive/50">
-            <CardContent className="flex flex-col items-center gap-4 py-12">
-              <AlertCircle className="h-12 w-12 text-destructive" />
-              <h2 className="text-xl font-semibold">Speech Recognition Not Supported</h2>
-              <p className="text-center text-muted-foreground">Please use Chrome, Edge, or Safari.</p>
-            </CardContent>
-          </Card>
-        </main>
-      </div>
-    );
-  }
+  const error = whisperError || recordingError;
 
   return (
     <div className="min-h-screen bg-background">
@@ -781,7 +980,7 @@ export default function Dashboard() {
                     </Label>
                     <div className={cn(
                       "flex items-center justify-center h-10 rounded-md border px-4 text-2xl font-mono font-bold tabular-nums",
-                      isListening && "text-destructive border-destructive/50 bg-destructive/5"
+                      isRecording && "text-destructive border-destructive/50 bg-destructive/5"
                     )}>
                       {formatDuration(recordingDuration)}
                     </div>
@@ -789,11 +988,11 @@ export default function Dashboard() {
                 </div>
 
                 {/* Waveform */}
-                <AudioWaveform isRecording={isListening} />
+                <AudioWaveform isRecording={isRecording} />
 
                 {/* Recording Controls */}
                 <div className="flex flex-wrap items-center gap-3">
-                  {!isListening ? (
+                  {!isRecording ? (
                     <Button
                       onClick={handleStartRecording}
                       className="gap-2 bg-destructive hover:bg-destructive/90 text-destructive-foreground min-w-[160px]"
@@ -813,13 +1012,23 @@ export default function Dashboard() {
                   )}
                   
                   <div className="flex items-center gap-2 px-3 py-2 bg-secondary rounded-md text-sm">
-                    {isListening ? (
+                    {isRecording ? (
                       <>
                         <span className="relative flex h-3 w-3">
                           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75"></span>
                           <span className="relative inline-flex h-3 w-3 rounded-full bg-destructive"></span>
                         </span>
-                        <span className="text-muted-foreground">Recording... {wordCount} words</span>
+                        <span className="text-muted-foreground">Listening...</span>
+                      </>
+                    ) : isWhisperTranscribing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin text-accent" />
+                        <span className="text-muted-foreground">Processing...</span>
+                      </>
+                    ) : transcript ? (
+                      <>
+                        <Activity className="h-4 w-4 text-accent" />
+                        <span className="text-muted-foreground max-w-[420px] truncate">{transcript}</span>
                       </>
                     ) : (
                       <>
@@ -828,10 +1037,12 @@ export default function Dashboard() {
                       </>
                     )}
                   </div>
+
+                  <MedicalAudioUploadButton onUploadComplete={handleUploadedAudioTranscription} />
                 </div>
 
                 {/* Live transcription during recording */}
-                {isListening && (transcript || interimTranscript) && (
+                {isRecording && transcript && (
                   <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
                     <h4 className="flex items-center gap-2 mb-2 font-semibold text-sm">
                       <span className="relative flex h-2 w-2">
@@ -842,7 +1053,6 @@ export default function Dashboard() {
                     </h4>
                     <div className="font-mono text-sm whitespace-pre-wrap min-h-[60px] max-h-[200px] overflow-y-auto">
                       {transcript}
-                      {interimTranscript && <span className="text-muted-foreground italic">{interimTranscript}</span>}
                     </div>
                   </div>
                 )}
@@ -850,7 +1060,7 @@ export default function Dashboard() {
                 {error && <p className="text-sm text-destructive">{error}</p>}
 
                 {/* ===== RECORDING RESULTS ===== */}
-                {!isListening && (
+                {!isRecording && (
                   <>
                     <div className="border-t pt-4" />
                     <h3 className="flex items-center gap-2 font-semibold text-lg border-l-4 border-primary pl-3">

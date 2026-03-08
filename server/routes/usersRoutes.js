@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { usersRepository } from "../lib/repositories/usersRepository.js";
 import { asyncHandler } from "../middleware/asyncHandler.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireRole } from "../middleware/auth.js";
+import { auditLogService } from "../services/auditLogService.js";
 
 const router = Router();
 
@@ -9,12 +10,18 @@ router.use(requireAuth);
 
 router.get(
   "/",
+  requireRole("admin"),
   asyncHandler(async (req, res) => {
     const limit =
       typeof req.query.limit === "string" && Number(req.query.limit) > 0
         ? Number(req.query.limit)
         : 100;
     const users = await usersRepository.listUsers(limit);
+    await auditLogService.log(req, {
+      action: "view_users",
+      resourceType: "user_collection",
+      resourceId: null,
+    });
     return res.json({ data: users, error: null });
   })
 );
@@ -45,4 +52,3 @@ router.put(
 );
 
 export default router;
-

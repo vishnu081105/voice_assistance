@@ -17,7 +17,8 @@ import Patient from "./pages/Patient";
 import Profile from "./pages/Profile";
 import ReportDetail from "./pages/ReportDetail";
 import NotFound from "./pages/NotFound";
-import SupabaseUsers from "./pages/SupabaseUsers";
+import UsersPage from "./pages/SupabaseUsers";
+import MedicalAudioAnalysis from "./pages/MedicalAudioAnalysis";
 
 const queryClient = new QueryClient();
 
@@ -99,10 +100,18 @@ const App = () => (
                   }
                 />
                 <Route
-                  path="/supabase-users"
+                  path="/users"
+                  element={
+                    <ProtectedRoute allowedRoles={["admin"]}>
+                      <UsersPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/medical-audio"
                   element={
                     <ProtectedRoute>
-                      <SupabaseUsers />
+                      <MedicalAudioAnalysis />
                     </ProtectedRoute>
                   }
                 />

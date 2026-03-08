@@ -10,6 +10,7 @@ import {
 export interface User {
   id: string;
   email: string;
+  role?: 'doctor' | 'admin' | 'staff';
   user_metadata?: {
     full_name?: string | null;
   };
@@ -97,4 +98,3 @@ export function useAuth() {
   }
   return context;
 }
-

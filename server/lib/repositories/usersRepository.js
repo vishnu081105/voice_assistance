@@ -1,11 +1,12 @@
 import { prisma } from "../db.js";
 
 export const usersRepository = {
-  async createUser({ email, fullName, passwordHash }) {
+  async createUser({ email, fullName, passwordHash, role = "doctor" }) {
     return prisma.user.create({
       data: {
         email,
         full_name: fullName ?? null,
+        role,
         password_hash: passwordHash,
       },
     });
@@ -26,6 +27,7 @@ export const usersRepository = {
         id,
         email: email ?? "",
         full_name: fullName ?? null,
+        role: "doctor",
         password_hash: "__unusable_password__",
       },
       update: {
@@ -73,6 +75,7 @@ export const usersRepository = {
         id: true,
         email: true,
         full_name: true,
+        role: true,
         created_at: true,
         updated_at: true,
       },

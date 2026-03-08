@@ -3,9 +3,19 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { usersRepository } from "../lib/repositories/usersRepository.js";
 import { toPublicUser, toSession } from "../lib/authSession.js";
-import { requireAuth, signAccessToken } from "../middleware/auth.js";
+import { clearAuthCookie, requireAuth, setAuthCookie, signAccessToken } from "../middleware/auth.js";
 import { asyncHandler } from "../middleware/asyncHandler.js";
-import { normalizeEmail, requireFields } from "../middleware/validation.js";
+import { authRateLimiter } from "../middleware/rateLimit.js";
+import { validateRequest } from "../middleware/validateRequest.js";
+import { auditLogService } from "../services/auditLogService.js";
+import {
+  forgotPasswordSchema,
+  loginSchema,
+  resetPasswordSchema,
+  signupSchema,
+  updatePasswordSchema,
+} from "../validators/authValidators.js";
+import { config } from "../config.js";
 
 const router = Router();
 
@@ -24,15 +34,9 @@ function validateResetPassword(password) {
 
 router.post(
   "/signup",
-  normalizeEmail,
-  requireFields(["email", "password"]),
+  validateRequest({ body: signupSchema }),
   asyncHandler(async (req, res) => {
-    const email = String(req.body.email);
-    const password = String(req.body.password);
-    const fullName =
-      typeof req.body.full_name === "string" && req.body.full_name.trim()
-        ? req.body.full_name.trim()
-        : null;
+    const { email, password, full_name: fullName } = req.validatedBody;
 
     if (!validatePasswordStrength(password)) {
       return res.status(400).json({
@@ -51,6 +55,7 @@ router.post(
       email,
       fullName,
       passwordHash,
+      role: "doctor",
     });
 
     return res.json({
@@ -62,11 +67,10 @@ router.post(
 
 router.post(
   "/login",
-  normalizeEmail,
-  requireFields(["email", "password"]),
+  authRateLimiter,
+  validateRequest({ body: loginSchema }),
   asyncHandler(async (req, res) => {
-    const email = String(req.body.email);
-    const password = String(req.body.password);
+    const { email, password } = req.validatedBody;
 
     const user = await usersRepository.findByEmail(email);
     if (!user || !user.password_hash) {
@@ -79,12 +83,17 @@ router.post(
     }
 
     const accessToken = signAccessToken(user);
-    req.session.userId = user.id;
-    req.session.accessToken = accessToken;
+    setAuthCookie(res, accessToken);
+    await auditLogService.log(req, {
+      action: "login",
+      resourceType: "user",
+      resourceId: user.id,
+      userId: user.id,
+    });
 
     return res.json({
       user: toPublicUser(user),
-      session: toSession(user, accessToken),
+      session: toSession(user),
     });
   })
 );
@@ -97,29 +106,29 @@ router.get(
     if (!user) {
       return res.status(401).json({ error: "User not authenticated" });
     }
-    return res.json({ user: toPublicUser(user), session: toSession(user, req.auth.accessToken) });
+    return res.json({ user: toPublicUser(user), session: toSession(user) });
   })
 );
 
 router.post(
   "/logout",
+  requireAuth,
   asyncHandler(async (req, res) => {
-    await new Promise((resolve) => req.session.destroy(resolve));
-    res.clearCookie("medivoice.sid");
+    await auditLogService.log(req, {
+      action: "logout",
+      resourceType: "user",
+      resourceId: req.auth.userId,
+    });
+    clearAuthCookie(res);
     return res.json({ success: true });
   })
 );
 
 router.post(
   "/forgot-password",
-  normalizeEmail,
-  requireFields(["email"]),
+  validateRequest({ body: forgotPasswordSchema }),
   asyncHandler(async (req, res) => {
-    const email = String(req.body.email);
-    const redirectTo =
-      typeof req.body.redirectTo === "string" && req.body.redirectTo.trim()
-        ? req.body.redirectTo.trim()
-        : "";
+    const { email, redirectTo } = req.validatedBody;
 
     const user = await usersRepository.findByEmail(email);
     if (!user) {
@@ -131,18 +140,20 @@ router.post(
     await usersRepository.setResetToken({ email, token, expiresAt });
 
     const link = redirectTo ? `${redirectTo}?token=${encodeURIComponent(token)}` : token;
-    console.info(`[password-reset] email=${email} resetLink=${link}`);
+    const response = { success: true };
+    if (!config.isProduction) {
+      response.debug_reset_link = link;
+    }
 
-    return res.json({ success: true });
+    return res.json(response);
   })
 );
 
 router.post(
   "/reset-password",
-  requireFields(["token", "password"]),
+  validateRequest({ body: resetPasswordSchema }),
   asyncHandler(async (req, res) => {
-    const token = String(req.body.token);
-    const password = String(req.body.password);
+    const { token, password } = req.validatedBody;
 
     if (!validateResetPassword(password)) {
       return res.status(400).json({
@@ -165,9 +176,9 @@ router.post(
 router.post(
   "/update-password",
   requireAuth,
-  requireFields(["password"]),
+  validateRequest({ body: updatePasswordSchema }),
   asyncHandler(async (req, res) => {
-    const password = String(req.body.password);
+    const { password } = req.validatedBody;
     if (!validateResetPassword(password)) {
       return res.status(400).json({
         error: "Password must be at least 6 characters.",

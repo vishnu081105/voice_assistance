@@ -2,12 +2,40 @@ import { apiRequest, getStoredSession } from "@/lib/apiClient";
 
 export type ReportType = "general" | "soap" | "diagnostic";
 
+export interface StructuredMedication {
+  name: string;
+  dosage: string;
+  frequency: string;
+}
+
+export interface StructuredPatientInformation {
+  patient_id?: string;
+  full_name?: string;
+  age?: number | null;
+  gender?: string;
+  phone?: string;
+  address?: string;
+  medical_history?: string;
+  allergies?: string;
+  diagnosis_history?: string;
+  doctor_id?: string;
+  doctor_name?: string;
+  report_type?: string;
+}
+
 export interface StructuredGeneratedReport {
+  patient_information: StructuredPatientInformation;
+  chief_complaint: string;
+  history_of_present_illness: string;
   summary: string;
   symptoms: string[];
+  medical_assessment: string;
   diagnosis: string;
   treatment_plan: string;
+  medications: StructuredMedication[];
+  follow_up_instructions: string[];
   recommendations: string[];
+  report_content?: string;
 }
 
 export interface Report {
@@ -53,14 +81,73 @@ function parseGeneratedReport(raw: string | null | undefined): StructuredGenerat
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return null;
+    const payload = parsed as Record<string, unknown>;
+    const patientInformation =
+      payload.patient_information && typeof payload.patient_information === "object"
+        ? (payload.patient_information as Record<string, unknown>)
+        : {};
+
     return {
-      summary: typeof parsed.summary === "string" ? parsed.summary : "",
-      symptoms: Array.isArray(parsed.symptoms) ? parsed.symptoms.filter((item: any) => typeof item === "string") : [],
-      diagnosis: typeof parsed.diagnosis === "string" ? parsed.diagnosis : "",
-      treatment_plan: typeof parsed.treatment_plan === "string" ? parsed.treatment_plan : "",
-      recommendations: Array.isArray(parsed.recommendations)
-        ? parsed.recommendations.filter((item: any) => typeof item === "string")
+      patient_information: {
+        patient_id:
+          typeof patientInformation.patient_id === "string" ? patientInformation.patient_id : undefined,
+        full_name:
+          typeof patientInformation.full_name === "string" ? patientInformation.full_name : undefined,
+        age:
+          typeof patientInformation.age === "number" ? patientInformation.age : null,
+        gender: typeof patientInformation.gender === "string" ? patientInformation.gender : undefined,
+        phone: typeof patientInformation.phone === "string" ? patientInformation.phone : undefined,
+        address: typeof patientInformation.address === "string" ? patientInformation.address : undefined,
+        medical_history:
+          typeof patientInformation.medical_history === "string"
+            ? patientInformation.medical_history
+            : undefined,
+        allergies:
+          typeof patientInformation.allergies === "string" ? patientInformation.allergies : undefined,
+        diagnosis_history:
+          typeof patientInformation.diagnosis_history === "string"
+            ? patientInformation.diagnosis_history
+            : undefined,
+        doctor_id:
+          typeof patientInformation.doctor_id === "string" ? patientInformation.doctor_id : undefined,
+        doctor_name:
+          typeof patientInformation.doctor_name === "string" ? patientInformation.doctor_name : undefined,
+        report_type:
+          typeof patientInformation.report_type === "string" ? patientInformation.report_type : undefined,
+      },
+      chief_complaint:
+        typeof payload.chief_complaint === "string" ? payload.chief_complaint : "",
+      history_of_present_illness:
+        typeof payload.history_of_present_illness === "string"
+          ? payload.history_of_present_illness
+          : "",
+      summary: typeof payload.summary === "string" ? payload.summary : "",
+      symptoms: Array.isArray(payload.symptoms)
+        ? payload.symptoms.filter((item): item is string => typeof item === "string")
         : [],
+      medical_assessment:
+        typeof payload.medical_assessment === "string" ? payload.medical_assessment : "",
+      diagnosis: typeof payload.diagnosis === "string" ? payload.diagnosis : "",
+      treatment_plan: typeof payload.treatment_plan === "string" ? payload.treatment_plan : "",
+      medications: Array.isArray(payload.medications)
+        ? payload.medications
+            .map((item) => {
+              const row = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+              return {
+                name: typeof row.name === "string" ? row.name : "",
+                dosage: typeof row.dosage === "string" ? row.dosage : "",
+                frequency: typeof row.frequency === "string" ? row.frequency : "",
+              };
+            })
+            .filter((item) => item.name)
+        : [],
+      follow_up_instructions: Array.isArray(payload.follow_up_instructions)
+        ? payload.follow_up_instructions.filter((item): item is string => typeof item === "string")
+        : [],
+      recommendations: Array.isArray(payload.recommendations)
+        ? payload.recommendations.filter((item): item is string => typeof item === "string")
+        : [],
+      report_content: typeof payload.report_content === "string" ? payload.report_content : undefined,
     };
   } catch {
     return null;

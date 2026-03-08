@@ -24,6 +24,21 @@ export interface Template {
   createdAt: Date;
 }
 
+type TemplateRow = {
+  id: string;
+  name: string;
+  content: string;
+  category: string;
+  created_at: string;
+};
+
+export interface AdminUserSummary {
+  id: string;
+  email: string;
+  full_name?: string | null;
+  role?: string | null;
+}
+
 export interface Setting {
   key: string;
   value: unknown;
@@ -145,7 +160,7 @@ export async function saveTemplate(template: Omit<Template, "id" | "createdAt">)
 export async function getAllTemplates(): Promise<Template[]> {
   await getCurrentUserId();
   try {
-    const { data } = await apiRequest<{ data: any[]; error: null }>("/api/templates");
+    const { data } = await apiRequest<{ data: TemplateRow[]; error: null }>("/api/templates");
     return (data || []).map((row) => ({
       id: row.id,
       name: row.name,
@@ -194,9 +209,9 @@ export async function clearAllSettings(): Promise<void> {
   await apiRequest("/api/settings", { method: "DELETE" });
 }
 
-export async function listUsers(limit = 100): Promise<any[]> {
+export async function listUsers(limit = 100): Promise<AdminUserSummary[]> {
   await getCurrentUserId();
-  const { data } = await apiRequest<{ data: any[]; error: null }>(`/api/users?limit=${limit}`);
+  const { data } = await apiRequest<{ data: AdminUserSummary[]; error: null }>(`/api/users?limit=${limit}`);
   return data || [];
 }
 

@@ -14,15 +14,13 @@ function notify(event: string, session: AppSession | null) {
 }
 
 export async function getSession(): Promise<AppSession | null> {
-  const session = getStoredSession();
-  if (!session) return null;
   try {
     const { session: refreshed } = await apiRequest<{ user: AppUser; session: AppSession }>("/api/auth/me");
-    if (refreshed?.access_token) {
+    if (refreshed?.user?.id) {
       setStoredSession(refreshed);
       return refreshed;
     }
-    return session;
+    return getStoredSession();
   } catch {
     setStoredSession(null);
     return null;

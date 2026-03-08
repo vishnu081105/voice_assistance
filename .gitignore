@@ -11,9 +11,19 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*
+!.env.example
 database/app.db
 server/uploads/*
 !server/uploads/.gitkeep
+server/private/*
+!server/private/.gitkeep
+tmp/*
+!tmp/.gitkeep
+.venv*/
+__pycache__/
+tmp_dashboard_numbered.txt
 
 # Editor directories and files
 .vscode/*

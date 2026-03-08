@@ -1,31 +1,26 @@
-import fs from "node:fs";
-import path from "node:path";
 import { Router } from "express";
 import multer from "multer";
-import { config } from "../config.js";
 import { requireAuth } from "../middleware/auth.js";
 import { asyncHandler } from "../middleware/asyncHandler.js";
+import { reportsRepository } from "../lib/repositories/reportsRepository.js";
+import {
+  buildAuthenticatedAudioUrl,
+  buildPrivateReportAudioPath,
+  ensurePrivateStorageDirectories,
+  inferAudioMimeType,
+  writeEncryptedFile,
+} from "../services/privateFileService.js";
+import { auditLogService } from "../services/auditLogService.js";
+import { config } from "../config.js";
 
 const router = Router();
 
-if (!fs.existsSync(config.uploadsDir)) {
-  fs.mkdirSync(config.uploadsDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, config.uploadsDir),
-  filename: (req, file, cb) => {
-    const reportId = String(req.body.reportId || "report");
-    const safeExt = path.extname(file.originalname || ".webm").replace(/[^a-zA-Z0-9.]/g, "");
-    cb(null, `${req.auth.userId}-${reportId}-${Date.now()}${safeExt || ".webm"}`);
-  },
-});
-
 const upload = multer({
-  storage,
-  limits: { fileSize: 50 * 1024 * 1024 },
+  storage: multer.memoryStorage(),
+  limits: { fileSize: config.medicalAudioMaxSizeMb * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (!file.mimetype.startsWith("audio/")) {
+    const mimeType = inferAudioMimeType(file.originalname, file.mimetype);
+    if (!config.allowedAudioMimeTypes.has(mimeType)) {
       cb(new Error("Only audio files are allowed"));
       return;
     }
@@ -41,10 +36,38 @@ router.post(
     if (!req.file) {
       return res.status(400).json({ data: null, error: { message: "No file uploaded" } });
     }
-    const publicUrl = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}`;
+
+    const reportId = String(req.body.reportId || "").trim();
+    if (!reportId) {
+      return res.status(400).json({ data: null, error: { message: "reportId is required" } });
+    }
+
+    const report = await reportsRepository.getReportByIdForUser(reportId, req.auth.userId);
+    if (!report) {
+      return res.status(404).json({ data: null, error: { message: "Report not found" } });
+    }
+
+    ensurePrivateStorageDirectories();
+    const storagePath = buildPrivateReportAudioPath(req.auth.userId, reportId, req.file.originalname);
+    await writeEncryptedFile(storagePath, req.file.buffer);
+
+    const mimeType = inferAudioMimeType(req.file.originalname, req.file.mimetype);
+    const publicUrl = buildAuthenticatedAudioUrl(req, reportId);
+
+    await reportsRepository.updateReportForUser(reportId, req.auth.userId, {
+      audio_url: publicUrl,
+      audio_storage_path: storagePath,
+      audio_mime_type: mimeType,
+    });
+    await auditLogService.log(req, {
+      action: "upload_report_audio",
+      resourceType: "report",
+      resourceId: reportId,
+    });
+
     return res.json({
       data: {
-        path: req.file.filename,
+        path: storagePath,
         publicUrl,
       },
       error: null,
@@ -53,4 +76,3 @@ router.post(
 );
 
 export default router;
-

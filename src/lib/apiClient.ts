@@ -4,6 +4,7 @@ const SESSION_KEY = "medivoice_session";
 export type AppUser = {
   id: string;
   email: string;
+  role?: "doctor" | "admin" | "staff";
   user_metadata?: {
     full_name?: string | null;
   };
@@ -51,7 +52,13 @@ type ApiOptions = {
   isFormData?: boolean;
 };
 
-export async function apiRequest<T = any>(path: string, options: ApiOptions = {}): Promise<T> {
+type ApiErrorEnvelope = {
+  error?: {
+    message?: string;
+  } | string;
+};
+
+export async function apiRequest<T = unknown>(path: string, options: ApiOptions = {}): Promise<T> {
   const method = options.method || "GET";
   const auth = options.auth !== false;
   const isFormData = options.isFormData === true;
@@ -69,6 +76,7 @@ export async function apiRequest<T = any>(path: string, options: ApiOptions = {}
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       method,
+      credentials: "include",
       headers,
       body: isFormData ? (options.body as FormData) : options.body ? JSON.stringify(options.body) : undefined,
     });
@@ -79,7 +87,7 @@ export async function apiRequest<T = any>(path: string, options: ApiOptions = {}
   }
 
   const text = await response.text();
-  let json: any = {};
+  let json: unknown = {};
   if (text) {
     try {
       json = JSON.parse(text);
@@ -89,7 +97,11 @@ export async function apiRequest<T = any>(path: string, options: ApiOptions = {}
   }
 
   if (!response.ok) {
-    const message = json?.error?.message || json?.error || "Request failed";
+    const payload = json as ApiErrorEnvelope;
+    const message =
+      typeof payload?.error === "string"
+        ? payload.error
+        : payload?.error?.message || "Request failed";
     throw new Error(message);
   }
 

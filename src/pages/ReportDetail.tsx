@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { getReport, updateReport, deleteReport, Report, ReportType } from '@/lib/db';
-import { downloadReportAsPDF } from '@/utils/pdfExport';
+import { downloadReportAsDOCX, downloadReportAsPDF, downloadReportAsText } from '@/utils/reportExport';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -102,31 +102,13 @@ export default function ReportDetail() {
 
   const handleDownloadTxt = () => {
     if (!report) return;
+    downloadReportAsText(report);
+  };
 
-    const content = `
-MediVoice Report
-================
-Date: ${format(new Date(report.createdAt), 'MMMM d, yyyy h:mm a')}
-Type: ${typeConfig[report.reportType].label}
-Duration: ${Math.floor(report.duration / 60)}:${(report.duration % 60).toString().padStart(2, '0')}
-Word Count: ${report.wordCount}
-
---- Original Transcription ---
-${report.transcription}
-
---- Generated Report ---
-${report.reportContent}
-    `.trim();
-
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `medivoice-report-${format(new Date(report.createdAt), 'yyyy-MM-dd-HHmm')}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  const handleDownloadDocx = async () => {
+    if (!report) return;
+    await downloadReportAsDOCX(report);
+    toast({ title: 'DOCX downloaded' });
   };
 
   const handleDownloadPdf = () => {
@@ -218,6 +200,10 @@ ${report.reportContent}
                         <DropdownMenuItem onClick={handleDownloadPdf} className="gap-2">
                           <FileDown className="h-4 w-4" />
                           Download as PDF
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => void handleDownloadDocx()} className="gap-2">
+                          <FileDown className="h-4 w-4" />
+                          Download as DOCX
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={handleDownloadTxt} className="gap-2">
                           <FileText className="h-4 w-4" />
