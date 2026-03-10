@@ -1,7 +1,6 @@
 import logging
 import os
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List
@@ -14,13 +13,12 @@ if VENDOR_SITE_PACKAGES.exists():
     sys.path.insert(0, str(VENDOR_SITE_PACKAGES))
 
 try:
-    from silero_vad import get_speech_timestamps, load_silero_vad, read_audio
+    from silero_vad import get_speech_timestamps, load_silero_vad
 
     SILERO_AVAILABLE = True
 except Exception:  # pragma: no cover - import availability depends on runtime deps
     get_speech_timestamps = None
     load_silero_vad = None
-    read_audio = None
     SILERO_AVAILABLE = False
 
 
@@ -69,9 +67,21 @@ class SileroVoiceActivityDetector:
         self.min_silence_duration_ms = _parse_positive_int(
             os.getenv("STT_VAD_MIN_SILENCE_MS", "250"), 250
         )
-        self.speech_pad_ms = _parse_positive_int(os.getenv("STT_VAD_SPEECH_PAD_MS", "150"), 150)
+        self.speech_pad_ms = _parse_positive_int(os.getenv("STT_VAD_SPEECH_PAD_MS", "180"), 180)
         self.min_speech_duration_ms = _parse_positive_int(
             os.getenv("STT_VAD_MIN_SPEECH_MS", "150"), 150
+        )
+        self.min_fragment_duration_ms = _parse_positive_int(
+            os.getenv("STT_VAD_MIN_FRAGMENT_MS", "350"), 350
+        )
+        self.fragment_merge_gap_ms = _parse_positive_int(
+            os.getenv("STT_VAD_FRAGMENT_MERGE_GAP_MS", "450"), 450
+        )
+        self.short_fragment_window_ms = _parse_positive_int(
+            os.getenv("STT_VAD_SHORT_FRAGMENT_WINDOW_MS", "1200"), 1200
+        )
+        self.min_short_fragment_peak_ratio = _parse_float(
+            os.getenv("STT_VAD_MIN_SHORT_FRAGMENT_PEAK_RATIO", "0.02"), 0.02
         )
         self.model = None
         self.enabled = SILERO_AVAILABLE
@@ -102,6 +112,10 @@ class SileroVoiceActivityDetector:
             "min_silence_duration_ms": self.min_silence_duration_ms,
             "speech_pad_ms": self.speech_pad_ms,
             "min_speech_duration_ms": self.min_speech_duration_ms,
+            "min_fragment_duration_ms": self.min_fragment_duration_ms,
+            "fragment_merge_gap_ms": self.fragment_merge_gap_ms,
+            "short_fragment_window_ms": self.short_fragment_window_ms,
+            "min_short_fragment_peak_ratio": self.min_short_fragment_peak_ratio,
             "last_error": self.last_error,
         }
 
@@ -113,12 +127,8 @@ class SileroVoiceActivityDetector:
         if not self.enabled or self.model is None:
             return self._fallback_intervals(normalized_audio)
 
-        temp_path = None
         try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-                temp_path = temp_file.name
-            normalized_audio.export(temp_path, format="wav")
-            waveform = read_audio(temp_path, sampling_rate=self.sample_rate)
+            waveform = audio_segment_to_float32_array(normalized_audio)
             timestamps = get_speech_timestamps(
                 waveform,
                 self.model,
@@ -132,12 +142,6 @@ class SileroVoiceActivityDetector:
             logging.warning("Silero VAD failed, falling back to full-audio chunking: %s", exc)
             self.last_error = str(exc)
             return self._fallback_intervals(normalized_audio)
-        finally:
-            if temp_path:
-                try:
-                    os.remove(temp_path)
-                except FileNotFoundError:
-                    pass
 
         intervals = []
         for timestamp in timestamps or []:
@@ -152,9 +156,26 @@ class SileroVoiceActivityDetector:
                 )
             )
 
-        merged = merge_intervals(intervals, max_gap_ms=self.speech_pad_ms)
-        if merged:
-            return merged
+        merged = merge_intervals(
+            intervals,
+            max_gap_ms=max(self.speech_pad_ms, self.fragment_merge_gap_ms),
+        )
+        smoothed = merge_small_fragments(
+            merged,
+            min_fragment_ms=self.min_fragment_duration_ms,
+            merge_gap_ms=self.fragment_merge_gap_ms,
+            total_duration_ms=duration_ms,
+        )
+        filtered = filter_low_energy_fragments(
+            normalized_audio,
+            smoothed,
+            short_fragment_window_ms=self.short_fragment_window_ms,
+            min_peak_ratio=self.min_short_fragment_peak_ratio,
+        )
+        if filtered:
+            return filtered
+        if smoothed:
+            return []
 
         return self._fallback_intervals(normalized_audio)
 
@@ -170,7 +191,7 @@ class SileroVoiceActivityDetector:
         return [SpeechInterval(start_ms=0, end_ms=len(normalized_audio))]
 
 
-def merge_intervals(intervals: Iterable[SpeechInterval], max_gap_ms: int = 150) -> List[SpeechInterval]:
+def merge_intervals(intervals: Iterable[SpeechInterval], max_gap_ms: int = 180) -> List[SpeechInterval]:
     ordered = sorted(
         [
             SpeechInterval(start_ms=max(0, int(interval.start_ms)), end_ms=max(0, int(interval.end_ms)))
@@ -196,15 +217,134 @@ def merge_intervals(intervals: Iterable[SpeechInterval], max_gap_ms: int = 150) 
     return merged
 
 
-def build_chunk_plan(intervals: Iterable[SpeechInterval], target_chunk_ms: int) -> List[List[SpeechInterval]]:
-    safe_target_chunk_ms = max(30000, min(60000, int(target_chunk_ms or 45000)))
+def merge_small_fragments(
+    intervals: Iterable[SpeechInterval],
+    min_fragment_ms: int = 350,
+    merge_gap_ms: int = 450,
+    total_duration_ms: int = 0,
+) -> List[SpeechInterval]:
+    ordered = list(intervals)
+    if not ordered:
+        return []
+
+    merged: List[SpeechInterval] = []
+    index = 0
+
+    while index < len(ordered):
+        current = ordered[index]
+        if current.duration_ms >= min_fragment_ms or len(ordered) == 1:
+            merged.append(current)
+            index += 1
+            continue
+
+        previous = merged[-1] if merged else None
+        next_interval = ordered[index + 1] if index + 1 < len(ordered) else None
+        previous_gap = current.start_ms - previous.end_ms if previous else merge_gap_ms + 1
+        next_gap = next_interval.start_ms - current.end_ms if next_interval else merge_gap_ms + 1
+
+        if previous and previous_gap <= merge_gap_ms and (not next_interval or previous_gap <= next_gap):
+            merged[-1] = SpeechInterval(start_ms=previous.start_ms, end_ms=current.end_ms)
+            index += 1
+            continue
+
+        if next_interval and next_gap <= merge_gap_ms:
+            ordered[index + 1] = SpeechInterval(start_ms=current.start_ms, end_ms=next_interval.end_ms)
+            index += 1
+            continue
+
+        if previous:
+            merged[-1] = SpeechInterval(start_ms=previous.start_ms, end_ms=current.end_ms)
+        elif total_duration_ms > 0:
+            merged.append(
+                SpeechInterval(
+                    start_ms=max(0, current.start_ms - min_fragment_ms),
+                    end_ms=min(total_duration_ms, current.end_ms + min_fragment_ms),
+                )
+            )
+        else:
+            merged.append(current)
+        index += 1
+
+    return merge_intervals(merged, max_gap_ms=merge_gap_ms)
+
+
+def filter_low_energy_fragments(
+    audio: AudioSegment,
+    intervals: Iterable[SpeechInterval],
+    short_fragment_window_ms: int = 1200,
+    min_peak_ratio: float = 0.02,
+) -> List[SpeechInterval]:
+    ordered = list(intervals)
+    if not ordered:
+        return []
+
+    samples = audio_segment_to_float32_array(audio)
+    global_peak = float(np.max(np.abs(samples))) if samples.size > 0 else 0.0
+    if global_peak <= 0:
+        return ordered
+
+    kept = []
+    for interval in ordered:
+        if interval.duration_ms <= 0:
+            continue
+        if interval.duration_ms > short_fragment_window_ms:
+            kept.append(interval)
+            continue
+
+        excerpt = audio[interval.start_ms : interval.end_ms]
+        excerpt_samples = audio_segment_to_float32_array(excerpt)
+        excerpt_peak = float(np.max(np.abs(excerpt_samples))) if excerpt_samples.size > 0 else 0.0
+        excerpt_rms = float(np.sqrt(np.mean(np.square(excerpt_samples)))) if excerpt_samples.size > 0 else 0.0
+        if excerpt_peak < global_peak * min_peak_ratio and excerpt_rms < global_peak * (min_peak_ratio / 2.0):
+            continue
+
+        kept.append(interval)
+
+    return kept
+
+
+def split_long_interval(interval: SpeechInterval, max_duration_ms: int, overlap_ms: int = 250) -> List[SpeechInterval]:
+    if interval.duration_ms <= max_duration_ms:
+        return [interval]
+
+    safe_overlap_ms = max(0, min(overlap_ms, max_duration_ms // 4))
+    parts = []
+    cursor_ms = interval.start_ms
+
+    while cursor_ms < interval.end_ms:
+        end_ms = min(interval.end_ms, cursor_ms + max_duration_ms)
+        parts.append(SpeechInterval(start_ms=cursor_ms, end_ms=end_ms))
+        if end_ms >= interval.end_ms:
+            break
+        cursor_ms = max(cursor_ms + 1, end_ms - safe_overlap_ms)
+
+    return parts
+
+
+def chunk_speech_duration_ms(chunk: Iterable[SpeechInterval]) -> int:
+    return sum(interval.duration_ms for interval in chunk)
+
+
+def build_chunk_plan(
+    intervals: Iterable[SpeechInterval],
+    target_chunk_ms: int,
+    min_chunk_ms: int = 20000,
+    max_chunk_ms: int = 40000,
+) -> List[List[SpeechInterval]]:
+    safe_min_chunk_ms = max(5000, int(min_chunk_ms or 20000))
+    safe_max_chunk_ms = max(safe_min_chunk_ms, int(max_chunk_ms or 40000))
+    safe_target_chunk_ms = max(safe_min_chunk_ms, min(safe_max_chunk_ms, int(target_chunk_ms or 30000)))
     chunks: List[List[SpeechInterval]] = []
     current_chunk: List[SpeechInterval] = []
     current_duration_ms = 0
 
-    for interval in intervals:
+    expanded_intervals: List[SpeechInterval] = []
+    for interval in merge_intervals(intervals, max_gap_ms=0):
+        expanded_intervals.extend(split_long_interval(interval, max_duration_ms=safe_max_chunk_ms))
+
+    for interval in expanded_intervals:
         interval_duration_ms = interval.duration_ms
-        if current_chunk and current_duration_ms + interval_duration_ms > safe_target_chunk_ms:
+        if current_chunk and current_duration_ms + interval_duration_ms > safe_max_chunk_ms:
             chunks.append(current_chunk)
             current_chunk = []
             current_duration_ms = 0
@@ -212,7 +352,19 @@ def build_chunk_plan(intervals: Iterable[SpeechInterval], target_chunk_ms: int) 
         current_chunk.append(interval)
         current_duration_ms += interval_duration_ms
 
+        if current_duration_ms >= safe_target_chunk_ms:
+            chunks.append(current_chunk)
+            current_chunk = []
+            current_duration_ms = 0
+
     if current_chunk:
-        chunks.append(current_chunk)
+        if chunks and current_duration_ms < safe_min_chunk_ms:
+            previous_duration_ms = chunk_speech_duration_ms(chunks[-1])
+            if previous_duration_ms + current_duration_ms <= safe_max_chunk_ms:
+                chunks[-1].extend(current_chunk)
+            else:
+                chunks.append(current_chunk)
+        else:
+            chunks.append(current_chunk)
 
     return chunks

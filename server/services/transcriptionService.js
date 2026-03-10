@@ -103,6 +103,14 @@ function inferChunkConfidence(payload, segments = []) {
   return normalizeConfidence(payload?.confidence, 1);
 }
 
+function sumSpeechDurationSeconds(segments = []) {
+  return (Array.isArray(segments) ? segments : []).reduce((sum, segment) => {
+    const start = toNumber(segment?.start, 0);
+    const end = toNumber(segment?.end, start);
+    return sum + Math.max(0, end - start);
+  }, 0);
+}
+
 export const transcriptionService = {
   model: config.whisperModel,
 
@@ -161,47 +169,30 @@ export const transcriptionService = {
     const combinedEntries = [];
     const combinedConfidence = [];
     let detectedLanguage = language && language !== "auto" ? language : "en";
+    let lockedLanguage = language && language !== "auto" ? language : "";
     let partial = false;
     let lowConfidenceDetected = false;
 
     for (const chunk of chunkFiles) {
       try {
         const chunkBuffer = await fs.readFile(chunk.path);
-        let payload = null;
-        let normalizedSegments = [];
-        let chunkConfidence = 1;
-
-        for (let attempt = 1; attempt <= 2; attempt += 1) {
-          payload = await transcriptionQueue.transcribeAudio({
-            audioBuffer: chunkBuffer,
-            fileName: path.basename(chunk.path),
-            mimeType: "audio/wav",
-            language,
-            metadata: {
-              wav_path: wavPath,
-              chunk_index: chunk.index + 1,
-              total_chunks: chunkFiles.length,
-              low_confidence_retry: attempt > 1,
-            },
-          });
-
-          normalizedSegments = normalizeSegments(payload, {
-            offsetSeconds: chunk.offsetSeconds,
-          });
-          chunkConfidence = inferChunkConfidence(payload, normalizedSegments);
-
-          if (chunkConfidence >= config.transcriptConfidenceThreshold || attempt === 2) {
-            break;
-          }
-
-          logger.warn("stt.low_confidence_retry", {
+        const payload = await transcriptionQueue.transcribeAudio({
+          audioBuffer: chunkBuffer,
+          fileName: path.basename(chunk.path),
+          mimeType: "audio/wav",
+          language: lockedLanguage || language,
+          metadata: {
             wav_path: wavPath,
             chunk_index: chunk.index + 1,
             total_chunks: chunkFiles.length,
-            confidence: chunkConfidence,
-            threshold: config.transcriptConfidenceThreshold,
-          });
-        }
+            locked_language: lockedLanguage || null,
+          },
+        });
+
+        const normalizedSegments = normalizeSegments(payload, {
+          offsetSeconds: chunk.offsetSeconds,
+        });
+        const chunkConfidence = inferChunkConfidence(payload, normalizedSegments);
 
         const chunkEntries = buildEntriesFromSegments(normalizedSegments);
 
@@ -218,6 +209,26 @@ export const transcriptionService = {
 
         if (typeof payload?.language === "string" && payload.language.trim()) {
           detectedLanguage = payload.language.trim();
+          if (!lockedLanguage && language === "auto" && chunkConfidence >= Math.max(config.transcriptConfidenceThreshold, 0.55)) {
+            lockedLanguage = payload.language.trim();
+          }
+        }
+
+        if (config.sttDebugMetrics) {
+          logger.info("stt.chunk_metrics", {
+            wav_path: wavPath,
+            chunk_index: chunk.index + 1,
+            total_chunks: chunkFiles.length,
+            audio_duration_seconds: Number(toNumber(payload?.duration, 0).toFixed(3)),
+            speech_duration_seconds: Number(sumSpeechDurationSeconds(normalizedSegments).toFixed(3)),
+            segment_count: normalizedSegments.length,
+            segment_confidence: normalizedSegments.map((segment) =>
+              Number(normalizeConfidence(segment?.confidence, 0).toFixed(4))
+            ),
+            overall_confidence: Number(chunkConfidence.toFixed(4)),
+            locked_language: lockedLanguage || null,
+            detected_language: detectedLanguage || null,
+          });
         }
 
         if (typeof onChunkResult === "function") {
@@ -266,6 +277,28 @@ export const transcriptionService = {
         ? Math.max(...combinedSegments.map((segment) => Math.max(segment.end, segment.start)))
         : inferDurationFromText(text, 0);
 
+    const overallConfidence =
+      combinedConfidence.length > 0
+        ? normalizeConfidence(
+            combinedConfidence.reduce((sum, value) => sum + normalizeConfidence(value, 1), 0) /
+              combinedConfidence.length,
+            1
+          )
+        : 1;
+
+    if (config.sttDebugMetrics) {
+      logger.info("stt.transcription_metrics", {
+        wav_path: wavPath,
+        audio_duration_seconds: Number(duration.toFixed(3)),
+        speech_duration_seconds: Number(sumSpeechDurationSeconds(combinedSegments).toFixed(3)),
+        segment_count: combinedSegments.length,
+        overall_confidence: Number(overallConfidence.toFixed(4)),
+        low_confidence_detected: lowConfidenceDetected,
+        partial,
+        language: detectedLanguage || "en",
+      });
+    }
+
     return {
       text,
       duration,
@@ -273,14 +306,7 @@ export const transcriptionService = {
       segments: combinedSegments,
       entries: combinedEntries,
       partial,
-      confidence:
-        combinedConfidence.length > 0
-          ? normalizeConfidence(
-              combinedConfidence.reduce((sum, value) => sum + normalizeConfidence(value, 1), 0) /
-                combinedConfidence.length,
-              1
-            )
-          : 1,
+      confidence: overallConfidence,
       lowConfidenceDetected,
     };
   },

@@ -1,5 +1,6 @@
 import os
 import tempfile
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -39,6 +40,10 @@ ALLOWED_MIME_TYPES = {
     "video/webm",
 }
 LOCALHOST_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+logging.basicConfig(
+    level=logging.INFO if str(os.getenv("STT_DEBUG_METRICS", "")).strip().lower() in {"1", "true", "yes", "on"} else logging.WARNING
+)
 
 transcriber = FasterWhisperLocalTranscriber()
 

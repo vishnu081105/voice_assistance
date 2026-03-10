@@ -50,6 +50,31 @@ const MEDICAL_TERM_CORRECTIONS = [
     reason: "Corrected medication spelling.",
   },
   {
+    pattern: /\bamoxcillin\b/gi,
+    replacement: "amoxicillin",
+    reason: "Corrected antibiotic spelling.",
+  },
+  {
+    pattern: /\bomeprazol\b/gi,
+    replacement: "omeprazole",
+    reason: "Corrected medication spelling.",
+  },
+  {
+    pattern: /\bmetphormin\b/gi,
+    replacement: "metformin",
+    reason: "Corrected diabetes medication spelling.",
+  },
+  {
+    pattern: /\batorvastin\b/gi,
+    replacement: "atorvastatin",
+    reason: "Corrected medication spelling.",
+  },
+  {
+    pattern: /\bdermatities\b/gi,
+    replacement: "dermatitis",
+    reason: "Corrected common dermatology diagnosis misspelling.",
+  },
+  {
     pattern: /\bwheesing\b/gi,
     replacement: "wheezing",
     reason: "Corrected symptom spelling.",
@@ -58,6 +83,16 @@ const MEDICAL_TERM_CORRECTIONS = [
     pattern: /\bphlem\b/gi,
     replacement: "phlegm",
     reason: "Corrected symptom spelling.",
+  },
+  {
+    pattern: /\bforengitis\b/gi,
+    replacement: "pharyngitis",
+    reason: "Corrected common diagnosis misspelling.",
+  },
+  {
+    pattern: /\btonsilities\b/gi,
+    replacement: "tonsillitis",
+    reason: "Corrected common diagnosis misspelling.",
   },
   {
     pattern: /\bbp\b/gi,
@@ -86,6 +121,48 @@ const MEDICAL_TERM_CORRECTIONS = [
   },
 ];
 
+function loadCustomCorrections() {
+  const raw = String(process.env.MEDICAL_VOCAB_CUSTOM_CORRECTIONS || "").trim();
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return [];
+
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const pattern = String(item.pattern || "").trim();
+          const replacement = String(item.replacement || "").trim();
+          if (!pattern || !replacement) return null;
+          return {
+            pattern: new RegExp(pattern, "gi"),
+            replacement,
+            reason: String(item.reason || "Applied custom medical vocabulary correction.").trim(),
+          };
+        })
+        .filter(Boolean);
+    }
+
+    return Object.entries(parsed)
+      .map(([source, replacement]) => {
+        const nextReplacement = String(replacement || "").trim();
+        if (!source || !nextReplacement) return null;
+        return {
+          pattern: new RegExp(`\\b${source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"),
+          replacement: nextReplacement,
+          reason: "Applied custom medical vocabulary correction.",
+        };
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+const VOCABULARY_RULES = [...MEDICAL_TERM_CORRECTIONS, ...loadCustomCorrections()];
+
 function normalizeWhitespace(text) {
   return String(text || "")
     .replace(/\r\n/g, "\n")
@@ -110,7 +187,7 @@ function applyCorrectionSet(text) {
   let nextText = normalizeWhitespace(text);
   const corrections = [];
 
-  for (const rule of MEDICAL_TERM_CORRECTIONS) {
+  for (const rule of VOCABULARY_RULES) {
     nextText = nextText.replace(rule.pattern, (match) => {
       const corrected = preserveCase(match, rule.replacement);
       if (match !== corrected) {
@@ -171,5 +248,9 @@ export const medicalVocabularyService = {
       entries: nextEntries,
       corrections: dedupeCorrections(corrections),
     };
+  },
+
+  getRuleCount() {
+    return VOCABULARY_RULES.length;
   },
 };

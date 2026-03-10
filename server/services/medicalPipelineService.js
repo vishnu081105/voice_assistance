@@ -8,6 +8,7 @@ import { medicalReportGenerator } from "./medicalReportGenerator.js";
 import { medicalRuntimeStore } from "./medicalRuntimeStore.js";
 import { medicalTranscriptionChannel } from "./medicalTranscriptionChannel.js";
 import { reportService } from "./reportService.js";
+import { transcriptCleaningService } from "./transcriptCleaningService.js";
 import {
   buildPrivateMedicalReportPath,
   buildPrivateMedicalTranscriptPath,
@@ -37,11 +38,7 @@ async function persistTranscript(uploadId, transcriptEntries) {
 
 function buildTranscriptText(transcriptEntries) {
   return (Array.isArray(transcriptEntries) ? transcriptEntries : [])
-    .map((entry) => {
-      const text = String(entry?.text || "").trim();
-      if (!text) return "";
-      return `${String(entry?.speaker || "Unknown").toUpperCase()}: ${text}`;
-    })
+    .map((entry) => transcriptCleaningService.formatTranscriptEntry(entry))
     .filter(Boolean)
     .join("\n");
 }

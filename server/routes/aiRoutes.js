@@ -10,6 +10,7 @@ import { audioProcessingService } from "../services/audioProcessingService.js";
 import { audioValidationService } from "../services/audioValidationService.js";
 import { transcriptionService } from "../services/transcriptionService.js";
 import { transcriptCleaningService } from "../services/transcriptCleaningService.js";
+import { medicalVocabularyService } from "../services/medicalVocabularyService.js";
 import { enhancementService } from "../services/enhancementService.js";
 import { reportService } from "../services/reportService.js";
 import { auditLogService } from "../services/auditLogService.js";
@@ -74,7 +75,19 @@ router.post(
         wavPath: preparedAudio.wavPath,
         language: parseResult.data.language,
       });
-      const cleanedText = transcriptCleaningService.cleanTranscript(transcription.text);
+      const correctedSegments = Array.isArray(transcription.segments)
+        ? transcription.segments
+            .map((segment) => {
+              const corrected = medicalVocabularyService.correctText(segment?.text || "");
+              return {
+                ...segment,
+                text: transcriptCleaningService.cleanTranscript(corrected.text),
+              };
+            })
+            .filter((segment) => segment.text)
+        : [];
+      const correctedText = medicalVocabularyService.correctText(transcription.text);
+      const cleanedText = transcriptCleaningService.cleanTranscript(correctedText.text);
 
       return res.json({
         transcript: cleanedText,
@@ -82,7 +95,7 @@ router.post(
         confidence: Number(transcription.confidence || 0),
         duration: Number(transcription.duration || 0),
         language: transcription.language || parseResult.data.language || "en",
-        segments: Array.isArray(transcription.segments) ? transcription.segments : [],
+        segments: correctedSegments,
         audio_url: null,
       });
     } catch (error) {

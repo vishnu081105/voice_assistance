@@ -9,6 +9,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { getSetting, setSetting } from '@/lib/db';
 import { useToast } from '@/hooks/use-toast';
 import { User, Building2, Mail, Save, Loader2, Camera, Upload } from 'lucide-react';
+import { brandLogoSrc } from '@/components/BrandLogo';
 
 export default function Profile() {
   const { user } = useAuth();
@@ -22,6 +23,8 @@ export default function Profile() {
   const [avatarUrl, setAvatarUrl] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const avatarImageSrc = avatarUrl || brandLogoSrc;
+  const avatarImageClassName = avatarUrl ? 'object-cover' : 'object-contain bg-white p-2';
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -157,7 +160,7 @@ export default function Profile() {
             <CardContent>
               <div className="flex items-center gap-6">
                 <Avatar className="h-24 w-24 border-4 border-primary/20">
-                  <AvatarImage src={avatarUrl} alt={doctorName || 'Doctor'} />
+                  <AvatarImage src={avatarImageSrc} alt={doctorName || 'Doctor'} className={avatarImageClassName} />
                   <AvatarFallback className="bg-primary/10 text-primary text-2xl font-semibold">
                     {doctorName ? getInitials(doctorName) : <User className="h-10 w-10" />}
                   </AvatarFallback>
@@ -202,7 +205,7 @@ export default function Profile() {
             <CardContent>
               <div className="flex items-center gap-3 rounded-lg bg-secondary/50 p-4">
                 <Avatar className="h-12 w-12">
-                  <AvatarImage src={avatarUrl} alt={doctorName || 'Doctor'} />
+                  <AvatarImage src={avatarImageSrc} alt={doctorName || 'Doctor'} className={avatarImageClassName} />
                   <AvatarFallback className="bg-primary/10 text-primary">
                     {doctorName ? getInitials(doctorName) : <User className="h-6 w-6" />}
                   </AvatarFallback>

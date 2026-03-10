@@ -66,12 +66,7 @@ function buildTranscriptEntries(transcription) {
 function buildTranscriptTextFromEntries(transcriptEntries) {
   return transcriptCleaningService.cleanTranscript(
     (Array.isArray(transcriptEntries) ? transcriptEntries : [])
-      .map((entry) => {
-        const speaker = String(entry?.speaker || "Unknown").trim().toUpperCase();
-        const text = String(entry?.text || "").trim();
-        if (!text) return "";
-        return `${speaker}: ${text}`;
-      })
+      .map((entry) => transcriptCleaningService.formatTranscriptEntry(entry))
       .filter(Boolean)
       .join("\n")
   );

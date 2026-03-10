@@ -104,7 +104,8 @@ export const config = {
   sttMaxConcurrentJobs: toPositiveNumber(process.env.STT_MAX_CONCURRENT_JOBS, 1),
   sttMaxQueueSize: toPositiveNumber(process.env.STT_MAX_QUEUE_SIZE, 16),
   sttRetryDelaysMs: parseNumberList(process.env.STT_RETRY_DELAYS_MS, [1000, 3000, 5000]),
-  sttChunkDurationSeconds: toPositiveNumber(process.env.STT_CHUNK_DURATION_SECONDS, 45),
+  sttChunkDurationSeconds: toPositiveNumber(process.env.STT_CHUNK_DURATION_SECONDS, 40),
+  sttDebugMetrics: parseBoolean(process.env.STT_DEBUG_METRICS, false),
   geminiApiKey: String(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "").trim(),
   geminiModel: String(process.env.GEMINI_MODEL || "gemini-1.5-flash").trim(),
   geminiTimeoutMs: toPositiveNumber(process.env.GEMINI_TIMEOUT_MS, 45000),
@@ -117,6 +118,10 @@ export const config = {
   audioNoiseReductionEnabled: parseBoolean(process.env.AUDIO_NOISE_REDUCTION_ENABLED, true),
   audioNoiseReductionFilter: String(
     process.env.AUDIO_NOISE_REDUCTION_FILTER || "highpass=f=120,lowpass=f=3800,afftdn=nf=-20"
+  ).trim(),
+  audioVolumeNormalizationEnabled: parseBoolean(process.env.AUDIO_VOLUME_NORMALIZATION_ENABLED, true),
+  audioVolumeNormalizationFilter: String(
+    process.env.AUDIO_VOLUME_NORMALIZATION_FILTER || "dynaudnorm=f=150:g=15:p=0.9:m=100:s=12"
   ).trim(),
   transcriptConfidenceThreshold: toUnitInterval(process.env.TRANSCRIPT_CONFIDENCE_THRESHOLD, 0.45),
   enableGeminiContextValidation: parseBoolean(process.env.ENABLE_GEMINI_CONTEXT_VALIDATION, true),

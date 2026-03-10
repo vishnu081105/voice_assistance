@@ -19,6 +19,7 @@ import {
   uploadMedicalAudio,
 } from '@/lib/repositories/medical.repository';
 import { cn } from '@/lib/utils';
+import { formatTranscriptEntriesText, stripUnknownSpeakerLabels } from '@/utils/transcriptFormatting';
 import {
   Activity,
   AlertCircle,
@@ -45,17 +46,6 @@ function statusVariant(status: string): 'default' | 'secondary' | 'destructive' 
   if (status === 'failed') return 'destructive';
   if (status === 'uploaded' || status === 'queued') return 'secondary';
   return 'outline';
-}
-
-function buildReviewTextFromEntries(entries: MedicalTranscriptEntry[]) {
-  return entries
-    .map((entry) => {
-      const text = String(entry?.text || '').trim();
-      if (!text) return '';
-      return `${String(entry?.speaker || 'Unknown').toUpperCase()}: ${text}`;
-    })
-    .filter(Boolean)
-    .join('\n');
 }
 
 function formatMedicalReportPreview(report: Record<string, unknown> | null) {
@@ -140,7 +130,8 @@ export default function MedicalAudioAnalysis() {
 
     if (!isReviewDirty || !reviewText.trim()) {
       const nextReviewText =
-        String(correctedTranscriptText || '').trim() || buildReviewTextFromEntries(transcriptEntries);
+        stripUnknownSpeakerLabels(String(correctedTranscriptText || '').trim()) ||
+        formatTranscriptEntriesText(transcriptEntries);
       setReviewText(nextReviewText);
     }
   };
@@ -284,12 +275,13 @@ export default function MedicalAudioAnalysis() {
   };
 
   const handleSaveReview = async () => {
-    if (!uploadId || !reviewText.trim()) return;
+    const sanitizedReviewText = stripUnknownSpeakerLabels(reviewText);
+    if (!uploadId || !sanitizedReviewText.trim()) return;
 
     setIsSavingReview(true);
     setErrorMessage('');
     try {
-      const response = await updateMedicalTranscript(uploadId, reviewText);
+      const response = await updateMedicalTranscript(uploadId, sanitizedReviewText);
       applyTranscriptState({
         transcriptEntries: Array.isArray(response.transcript) ? response.transcript : [],
         correctedTranscriptText: response.corrected_transcript_text,
@@ -509,17 +501,15 @@ export default function MedicalAudioAnalysis() {
                         className={cn(
                           'rounded-md border p-3 text-sm',
                           entry.speaker === 'Doctor' && 'border-primary/30 bg-primary/5',
-                          entry.speaker === 'Patient' && 'border-blue-500/30 bg-blue-500/5',
-                          entry.speaker === 'Unknown' && 'border-muted bg-muted/20'
+                          entry.speaker === 'Patient' && 'border-blue-500/30 bg-blue-500/5'
                         )}
                       >
                         <div className="mb-1 flex flex-wrap items-center gap-2 text-xs">
-                          <Badge
-                            variant={entry.speaker === 'Doctor' ? 'default' : 'secondary'}
-                            className={cn(entry.speaker === 'Unknown' && 'bg-muted text-muted-foreground')}
-                          >
-                            {entry.speaker}
-                          </Badge>
+                          {entry.speaker === 'Doctor' || entry.speaker === 'Patient' ? (
+                            <Badge variant={entry.speaker === 'Doctor' ? 'default' : 'secondary'}>
+                              {entry.speaker}
+                            </Badge>
+                          ) : null}
                           <span className="font-mono text-muted-foreground">
                             {entry.start_time} - {entry.end_time}
                           </span>
@@ -545,7 +535,7 @@ export default function MedicalAudioAnalysis() {
                 <Textarea
                   value={reviewText}
                   onChange={(event) => {
-                    setReviewText(event.target.value);
+                    setReviewText(stripUnknownSpeakerLabels(event.target.value));
                     setIsReviewDirty(true);
                   }}
                   placeholder="Review and edit the transcript before finalizing the report."

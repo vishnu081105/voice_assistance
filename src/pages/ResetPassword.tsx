@@ -4,9 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Activity, Loader2, Lock, CheckCircle } from 'lucide-react';
+import { Loader2, Lock, CheckCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { getSession, resetPasswordWithToken, updateCurrentUserPassword } from '@/lib/authClient';
+import { BrandLogo } from '@/components/BrandLogo';
 
 export default function ResetPassword() {
   const [password, setPassword] = useState('');
@@ -101,14 +102,13 @@ export default function ResetPassword() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-background via-background to-primary/5 p-4">
-      <div className="mb-8 flex items-center gap-3">
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent shadow-lg shadow-primary/25">
-          <Activity className="h-7 w-7 text-primary-foreground" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold">MediVoice</h1>
-          <p className="text-sm text-muted-foreground">Medical Transcription</p>
-        </div>
+      <div className="mb-8">
+        <BrandLogo
+          className="items-center text-center"
+          imgClassName="h-14 max-w-[240px] sm:h-16 sm:max-w-[280px]"
+          subtitle="Medical Transcription"
+          subtitleClassName="text-sm"
+        />
       </div>
 
       <Card className="w-full max-w-md shadow-xl border-border/50">

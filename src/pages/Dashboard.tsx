@@ -40,6 +40,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { apiRequest } from '@/lib/apiClient';
 import { ReportApiRow } from '@/lib/repositories/report.repository';
 import { buildStructuredReportText } from '@/utils/reportFormatting';
+import { formatTranscriptEntriesText, stripUnknownSpeakerLabels } from '@/utils/transcriptFormatting';
+import { brandLogoSrc } from '@/components/BrandLogo';
 import {
   getMedicalTranscript,
   MedicalTranscriptEntry,
@@ -148,7 +150,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!isEditingTranscription && !editedTranscript && !isUploadTranscribing) {
-      setEditedTranscript(transcript);
+      setEditedTranscript(stripUnknownSpeakerLabels(transcript));
     }
   }, [transcript, isEditingTranscription, editedTranscript, isUploadTranscribing]);
 
@@ -265,15 +267,7 @@ export default function Dashboard() {
   };
 
   const formatUploadedTranscriptText = (entries: MedicalTranscriptEntry[]) => {
-    return entries
-      .map((entry) => {
-        const text = String(entry?.text || '').trim();
-        if (!text) return '';
-        const speaker = String(entry?.speaker || 'Unknown').toUpperCase();
-        return `${speaker}: ${text}`;
-      })
-      .filter(Boolean)
-      .join('\n');
+    return formatTranscriptEntriesText(entries);
   };
 
   const handleUploadedAudioTranscription = async ({
@@ -313,8 +307,9 @@ export default function Dashboard() {
             uploadTranscriptionStopRef.current = null;
           }
           if (finalText) {
-            setWhisperTranscript(finalText);
-            setEditedTranscript(finalText);
+            const sanitizedText = stripUnknownSpeakerLabels(finalText);
+            setWhisperTranscript(sanitizedText);
+            setEditedTranscript(sanitizedText);
           }
           resolve();
         };
@@ -436,8 +431,9 @@ export default function Dashboard() {
           throw new Error('Transcription failed. Please try again.');
         }
 
-        setWhisperTranscript(result.text);
-        setEditedTranscript(result.text);
+        const sanitizedText = stripUnknownSpeakerLabels(result.text);
+        setWhisperTranscript(sanitizedText);
+        setEditedTranscript(sanitizedText);
         toast({
           title: 'Transcription Complete',
           description: `Transcribed ${Math.round(result.duration)}s of audio.`,
@@ -473,7 +469,7 @@ export default function Dashboard() {
   };
 
   const handleSaveTranscriptionEdit = (text: string) => {
-    setEditedTranscript(text);
+    setEditedTranscript(stripUnknownSpeakerLabels(text));
     setIsEditingTranscription(false);
     toast({ title: 'Transcription saved', description: 'Your edits have been saved.' });
   };
@@ -497,7 +493,7 @@ export default function Dashboard() {
   };
 
   const handleEnhanceTranscription = async () => {
-    const textToEnhance = editedTranscript || transcript;
+    const textToEnhance = stripUnknownSpeakerLabels(editedTranscript || transcript);
     if (!textToEnhance.trim()) {
       toast({ variant: 'destructive', title: 'No transcription', description: 'Please record some audio first.' });
       return;
@@ -515,7 +511,7 @@ export default function Dashboard() {
         },
       });
       if (data.processed) {
-        setEditedTranscript(data.processed);
+        setEditedTranscript(stripUnknownSpeakerLabels(data.processed));
         if (data.speakers?.length > 0) setDetectedSpeakers(data.speakers);
         toast({ title: 'Transcription Enhanced', description: 'Medical terminology corrected.' });
       }
@@ -541,7 +537,7 @@ export default function Dashboard() {
     }
   };
 
-  const currentTranscript = editedTranscript || transcript;
+  const currentTranscript = stripUnknownSpeakerLabels(editedTranscript || transcript);
   const hasTranscription = currentTranscript.trim().length > 0;
   const wordCount = currentTranscript.trim().split(/\s+/).filter(Boolean).length;
 
@@ -556,7 +552,7 @@ export default function Dashboard() {
   };
 
   const generateReport = async () => {
-    const textToProcess = editedTranscript || transcript;
+    const textToProcess = currentTranscript;
     if (!textToProcess.trim()) {
       toast({ variant: 'destructive', title: 'No transcription', description: 'Please record some audio first.' });
       return;
@@ -790,10 +786,16 @@ export default function Dashboard() {
       <main className="container max-w-[1400px] py-6 px-4">
         {/* App Header - matching the HTML design */}
         <div className="rounded-xl bg-gradient-to-r from-primary to-[hsl(217,89%,61%)] text-primary-foreground p-6 mb-6 shadow-lg">
-          <div className="flex items-center gap-3">
-            <Activity className="h-8 w-8" />
-            <div>
-              <h1 className="text-2xl font-bold">Hospital Voice Recording System</h1>
+          <div className="flex items-center gap-4">
+            <div className="rounded-2xl bg-white/95 p-2 shadow-lg shadow-black/10">
+              <img
+                src={brandLogoSrc}
+                alt="CubeAI Solutions"
+                className="h-9 w-auto max-w-[160px] object-contain sm:h-11 sm:max-w-[200px]"
+              />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-2xl font-bold">Voice Recording System</h1>
               <p className="opacity-90 text-sm">Secure medical documentation through voice recording and transcription</p>
             </div>
             {isWhisperTranscribing && (
@@ -1109,15 +1111,15 @@ export default function Dashboard() {
                         </h4>
                         {isEditingTranscription ? (
                           <TranscriptionEditor
-                            transcription={editedTranscript || transcript}
+                            transcription={currentTranscript}
                             onSave={handleSaveTranscriptionEdit}
                             onCancel={() => setIsEditingTranscription(false)}
                           />
                         ) : (
                           <>
                             <div className="bg-secondary/30 rounded-lg border p-4 min-h-[150px] max-h-[400px] overflow-y-auto font-mono text-sm whitespace-pre-wrap">
-                              {(editedTranscript || transcript)
-                                ? (editedTranscript || transcript).split('\n').map((line, i) => {
+                              {currentTranscript
+                                ? currentTranscript.split('\n').map((line, i) => {
                                     const isDoc = line.startsWith('DOCTOR:');
                                     const isPat = line.startsWith('PATIENT:');
                                     if (isDoc || isPat) {
@@ -1162,7 +1164,7 @@ export default function Dashboard() {
                           </div>
                         )}
                         <div className="bg-secondary/30 rounded-lg border p-4 min-h-[150px] max-h-[400px] overflow-y-auto font-mono text-sm whitespace-pre-wrap">
-                          {editedTranscript || transcript || 'Click "Enhance with AI" to process the transcript.'}
+                          {currentTranscript || 'Click "Enhance with AI" to process the transcript.'}
                         </div>
                       </TabsContent>
 

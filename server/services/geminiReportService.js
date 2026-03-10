@@ -1,6 +1,7 @@
 import { config } from "../config.js";
 import { logger } from "../utils/logger.js";
 import { buildStructuredReport } from "./medicalReportGenerator.js";
+import { transcriptCleaningService } from "./transcriptCleaningService.js";
 
 const DEFAULT_RETRY_DELAYS = Array.isArray(config.geminiRetryDelaysMs) && config.geminiRetryDelaysMs.length > 0
   ? config.geminiRetryDelaysMs
@@ -164,12 +165,7 @@ function buildPrompt({
 } = {}) {
   const transcriptPreview = Array.isArray(transcriptEntries)
     ? transcriptEntries
-        .map((entry) => {
-          const speaker = normalizeText(entry?.speaker, "Unknown");
-          const text = normalizeText(entry?.text);
-          if (!text) return "";
-          return `${speaker}: ${text}`;
-        })
+        .map((entry) => transcriptCleaningService.formatTranscriptEntry(entry))
         .filter(Boolean)
         .join("\n")
     : "";

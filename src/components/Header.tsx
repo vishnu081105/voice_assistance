@@ -18,12 +18,12 @@ import {
   User,
   Home,
   Users,
-  ClipboardList,
-  Building2
+  ClipboardList
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useState, useEffect } from 'react';
 import { getSetting } from '@/lib/db';
+import { BrandLogo, brandLogoSrc } from '@/components/BrandLogo';
 
 export function Header() {
   const { user, signOut } = useAuth();
@@ -62,21 +62,19 @@ export function Header() {
 
   const isActive = (paths: string[]) => paths.includes(location.pathname);
   const isReportActive = location.pathname === '/report' || location.pathname === '/history' || location.pathname.startsWith('/report/');
+  const avatarImageSrc = avatarUrl || brandLogoSrc;
+  const avatarImageClassName = avatarUrl ? 'object-cover' : 'object-contain bg-white p-1';
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60">
       <div className="container flex h-16 items-center justify-between px-4">
-        {/* Logo */}
-        <Link to="/" className="flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary/80 shadow-md">
-            <Building2 className="h-5 w-5 text-primary-foreground" />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/70">
-              KMCH Hospital
-            </span>
-            <span className="text-[10px] text-muted-foreground -mt-1 hidden sm:block">Voice Recording System</span>
-          </div>
+        <Link to="/" className="flex items-center">
+          <BrandLogo
+            className="leading-none"
+            imgClassName="h-8 max-w-[118px] sm:h-10 sm:max-w-[180px]"
+            subtitle="Voice Recording System"
+            subtitleClassName="hidden sm:block text-[10px] leading-none"
+          />
         </Link>
 
         {/* Right side - Navigation + Profile grouped together */}
@@ -142,7 +140,7 @@ export function Header() {
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative h-10 w-10 rounded-full p-0 ml-1">
                   <Avatar className="h-10 w-10 border-2 border-primary/20">
-                    <AvatarImage src={avatarUrl} alt={doctorName || 'Doctor'} />
+                    <AvatarImage src={avatarImageSrc} alt={doctorName || 'Doctor'} className={avatarImageClassName} />
                     <AvatarFallback className="bg-primary/10 text-primary font-semibold">
                       {doctorName ? getInitials(doctorName) : <User className="h-5 w-5" />}
                     </AvatarFallback>
@@ -153,7 +151,7 @@ export function Header() {
                 <DropdownMenuLabel>
                   <div className="flex items-center gap-3">
                     <Avatar className="h-10 w-10">
-                      <AvatarImage src={avatarUrl} alt={doctorName || 'Doctor'} />
+                      <AvatarImage src={avatarImageSrc} alt={doctorName || 'Doctor'} className={avatarImageClassName} />
                       <AvatarFallback className="bg-primary/10 text-primary">
                         {doctorName ? getInitials(doctorName) : <User className="h-4 w-4" />}
                       </AvatarFallback>

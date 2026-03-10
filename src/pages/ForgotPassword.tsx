@@ -4,9 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Activity, Loader2, ArrowLeft, Mail, CheckCircle } from 'lucide-react';
+import { Loader2, ArrowLeft, Mail, CheckCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { requestPasswordReset } from '@/lib/authClient';
+import { BrandLogo } from '@/components/BrandLogo';
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState('');
@@ -47,14 +48,13 @@ export default function ForgotPassword() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-background via-background to-primary/5 p-4">
-      <div className="mb-8 flex items-center gap-3">
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent shadow-lg shadow-primary/25">
-          <Activity className="h-7 w-7 text-primary-foreground" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text">MediVoice</h1>
-          <p className="text-sm text-muted-foreground">Medical Transcription</p>
-        </div>
+      <div className="mb-8">
+        <BrandLogo
+          className="items-center text-center"
+          imgClassName="h-14 max-w-[240px] sm:h-16 sm:max-w-[280px]"
+          subtitle="Medical Transcription"
+          subtitleClassName="text-sm"
+        />
       </div>
 
       <Card className="w-full max-w-md shadow-xl border-border/50">

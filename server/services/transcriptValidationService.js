@@ -21,12 +21,7 @@ function clampConfidence(value) {
 function buildTranscriptText(entries = []) {
   return normalizeText(
     (Array.isArray(entries) ? entries : [])
-      .map((entry) => {
-        const text = normalizeText(entry?.text);
-        if (!text) return "";
-        const speaker = normalizeText(entry?.speaker, "Unknown");
-        return `${speaker.toUpperCase()}: ${text}`;
-      })
+      .map((entry) => transcriptCleaningService.formatTranscriptEntry(entry))
       .filter(Boolean)
       .join("\n")
   );

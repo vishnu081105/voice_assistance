@@ -283,7 +283,7 @@ function buildTranscriptTableRows(transcriptEntries) {
       <tr>
         <td>${escapeHtml(item.start_time || "00:00:00")}</td>
         <td>${escapeHtml(item.end_time || "00:00:00")}</td>
-        <td>${escapeHtml(item.speaker || "Unknown")}</td>
+        <td>${escapeHtml(item.speaker === "Doctor" || item.speaker === "Patient" ? item.speaker : "")}</td>
         <td>${escapeHtml(item.text || "")}</td>
       </tr>
     `
@@ -314,7 +314,12 @@ function buildJsonReport({ session, transcriptEntries, analysis, structuredRepor
       treatment_plan: normalizedReport.treatment_plan,
       medications: normalizedReport.medications,
       follow_up_instructions: normalizedReport.follow_up_instructions,
-      full_transcript: transcriptEntries || [],
+      full_transcript: Array.isArray(transcriptEntries)
+        ? transcriptEntries.map((entry) => ({
+            ...entry,
+            speaker: entry?.speaker === "Doctor" || entry?.speaker === "Patient" ? entry.speaker : "",
+          }))
+        : [],
     },
     analysis,
     structured_report: normalizedReport,

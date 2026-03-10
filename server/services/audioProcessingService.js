@@ -160,11 +160,19 @@ async function createWorkingDirectory(workIdPrefix) {
 }
 
 async function convertToWavPcm16Mono({ inputPath, outputPath }) {
-  const audioFilter = audioEnhancementService.getNoiseReductionFilter();
+  const audioFilter = audioEnhancementService.getTranscriptionFilterChain();
   const args = [
     "-y",
+    "-hide_banner",
+    "-loglevel",
+    "error",
     "-i",
     inputPath,
+    "-vn",
+    "-sn",
+    "-dn",
+    "-map_metadata",
+    "-1",
   ];
 
   if (audioFilter) {
@@ -176,6 +184,8 @@ async function convertToWavPcm16Mono({ inputPath, outputPath }) {
     "1",
     "-ar",
     "16000",
+    "-sample_fmt",
+    "s16",
     "-acodec",
     "pcm_s16le",
     outputPath
@@ -190,8 +200,8 @@ async function convertToWavPcm16Mono({ inputPath, outputPath }) {
 
 function getChunkDurationSeconds(value) {
   const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) return 45;
-  return Math.min(60, Math.max(30, Math.floor(numeric)));
+  if (!Number.isFinite(numeric) || numeric <= 0) return 40;
+  return Math.min(40, Math.max(20, Math.floor(numeric)));
 }
 
 export const audioProcessingService = {

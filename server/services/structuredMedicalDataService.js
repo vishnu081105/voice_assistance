@@ -1,5 +1,7 @@
 import { medicalAnalysisService } from "./medicalAnalysisService.js";
 
+import { transcriptCleaningService } from "./transcriptCleaningService.js";
+
 function uniq(values = []) {
   return [...new Set(values.filter(Boolean))];
 }
@@ -14,12 +16,7 @@ function normalizeText(value) {
 
 function transcriptToText(transcriptEntries = []) {
   return (Array.isArray(transcriptEntries) ? transcriptEntries : [])
-    .map((entry) => {
-      const speaker = String(entry?.speaker || "Unknown").trim();
-      const text = normalizeText(entry?.text);
-      if (!text) return "";
-      return `${speaker}: ${text}`;
-    })
+    .map((entry) => transcriptCleaningService.formatTranscriptEntry(entry))
     .filter(Boolean)
     .join("\n");
 }

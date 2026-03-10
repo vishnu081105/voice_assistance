@@ -5,9 +5,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Building2, Loader2, Mail, Lock, User, Eye, EyeOff } from 'lucide-react';
+import { Loader2, Mail, Lock, User, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { setSetting } from '@/lib/db';
+import { BrandLogo } from '@/components/BrandLogo';
 
 // Signup will no longer require OTP verification; users can sign in after account creation.
 
@@ -161,14 +162,13 @@ export default function Login() {
         <div className="absolute -bottom-1/4 -right-1/4 h-1/2 w-1/2 rounded-full bg-accent/5 blur-3xl" />
       </div>
 
-      <div className="relative mb-8 flex items-center gap-3">
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-primary/70 shadow-lg shadow-primary/25">
-          <Building2 className="h-8 w-8 text-primary-foreground" />
-        </div>
-        <div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text">KMCH Hospital</h1>
-          <p className="text-sm text-muted-foreground">Voice Recording & Transcription System</p>
-        </div>
+      <div className="relative mb-8">
+        <BrandLogo
+          className="items-center text-center"
+          imgClassName="h-16 max-w-[260px] sm:h-20 sm:max-w-[320px]"
+          subtitle="Voice Recording & Transcription System"
+          subtitleClassName="text-sm"
+        />
       </div>
 
       <Card className="relative w-full max-w-md shadow-2xl border-border/50 backdrop-blur-sm">

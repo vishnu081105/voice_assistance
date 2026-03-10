@@ -1,3 +1,5 @@
+import { transcriptCleaningService } from "./transcriptCleaningService.js";
+
 const symptomLexicon = [
   "fever",
   "cough",
@@ -157,12 +159,7 @@ function extractRiskFlags(text) {
 function conversationTextFromTranscript(transcriptEntries) {
   if (!Array.isArray(transcriptEntries)) return "";
   return transcriptEntries
-    .map((entry) => {
-      const speaker = entry?.speaker || "Unknown";
-      const text = String(entry?.text || "").trim();
-      if (!text) return "";
-      return `${speaker}: ${text}`;
-    })
+    .map((entry) => transcriptCleaningService.formatTranscriptEntry(entry))
     .filter(Boolean)
     .join(" ");
 }
